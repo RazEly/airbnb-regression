@@ -44,7 +44,7 @@ from sklearn.neighbors import KNeighborsClassifier
 # %%
 # Configuration
 DATA_PATH = "./airbnb.csv"  # Path to local CSV file
-SAMPLE_FRACTION = 0.1  # Sample 10% for local testing (set to 1.0 for full dataset)
+SAMPLE_FRACTION = 1.0  # Use full dataset for production model training
 
 print(f"Creating local Spark session...")
 
@@ -540,12 +540,25 @@ def fit_transform_city(train_df, val_df):
     city_medians = train_df.groupBy("city").agg(
         F.percentile_approx("price_cleaned", 0.5).alias("median_city")
     )
+
+    # Compute median coordinates (city centers) per city
+    city_centers = train_df.groupBy("city").agg(
+        F.percentile_approx("lat", 0.5).alias("center_lat"),
+        F.percentile_approx("long", 0.5).alias("center_lon"),
+    )
+
     # Compute global median price from train_df
     global_median = train_df.agg(F.percentile_approx("price_cleaned", 0.5)).first()[0]
 
     # Save state for later use (as dicts)
     city_medians_dict = {
         row["city"]: row["median_city"] for row in city_medians.collect()
+    }
+
+    # Save city centers as dict
+    city_centers_dict = {
+        row["city"]: {"lat": float(row["center_lat"]), "lon": float(row["center_lon"])}
+        for row in city_centers.collect()
     }
 
     # Add median_city column to train_df
@@ -561,6 +574,7 @@ def fit_transform_city(train_df, val_df):
 
     # Optionally, save state for later use (e.g., as attributes)
     fit_transform_city.city_medians_dict = city_medians_dict
+    fit_transform_city.city_centers_dict = city_centers_dict
     fit_transform_city.global_median = global_median
 
     return train_df, val_df
@@ -950,7 +964,6 @@ def fit_transform_features(train_df, val_df, features=None):
                 "total_rooms",
                 "rooms_per_guest",
                 "amenities_count",
-                "min_nights",
                 "description_length_logp1",
                 "loc_details_length_logp1",
             ]
@@ -998,9 +1011,7 @@ def fit_transform_features(train_df, val_df, features=None):
     binary_imputed_cols = [f"{c}_imputed" for c in binary_features]
     imputer_binary = Imputer(
         inputCols=binary_features, outputCols=binary_imputed_cols
-    ).setStrategy(
-        "mode"
-    )  # Use mode for binary
+    ).setStrategy("mode")  # Use mode for binary
 
     imputer_binary_model = imputer_binary.fit(train_df)
     train_df = imputer_binary_model.transform(train_df)
@@ -1051,7 +1062,19 @@ def fit_transform_features(train_df, val_df, features=None):
     train_df = train_df.drop(*columns_to_drop)
     val_df = val_df.drop(*columns_to_drop)
 
-    return train_df, val_df
+    # Return fitted components for model saving
+    return (
+        train_df,
+        val_df,
+        imputer_model,  # Continuous imputer
+        imputer_binary_model,  # Binary imputer
+        scaler_model,  # Scaler
+        assembler_continuous,  # Continuous assembler
+        assembler_binary,  # Binary assembler
+        assembler_final,  # Final assembler
+        valid_continuous_features,  # Feature names
+        binary_features,  # Feature names
+    )
 
 
 # %%
@@ -1189,8 +1212,10 @@ def train_models(train_data, val_data):
 
         except Exception as e:
             print(f"Skipping {name} due to error: {e}")
+            model = None
 
-    return results
+    # Return results and the trained model
+    return results, model
 
 
 # %%
@@ -1332,7 +1357,19 @@ val_df = val_df.cache()
 val_df.count()
 
 # %%
-train_df, val_df = fit_transform_features(train_df, val_df)
+# Unpack fitted components from fit_transform_features
+(
+    train_df,
+    val_df,
+    imputer_cont,
+    imputer_bin,
+    scaler,
+    asm_cont,
+    asm_bin,
+    asm_final,
+    cont_features,
+    bin_features,
+) = fit_transform_features(train_df, val_df)
 
 # %%
 # train_df.write.mode("overwrite").parquet("./data/train")
@@ -1342,4 +1379,34 @@ train_df, val_df = fit_transform_features(train_df, val_df)
 train_df.show(10)
 
 # %%
-results = train_models(train_df, val_df)
+results, gbt_model = train_models(train_df, val_df)
+
+# %%
+# === SAVE PIPELINE ARTIFACTS ===
+print("\n" + "=" * 70)
+print("SAVING MODEL PIPELINE")
+print("=" * 70)
+
+from model_saver import save_pipeline_artifacts
+
+# Save everything
+save_pipeline_artifacts(
+    gbt_model=gbt_model,
+    imputer_continuous_model=imputer_cont,
+    imputer_binary_model=imputer_bin,
+    scaler_model=scaler,
+    assembler_continuous=asm_cont,
+    assembler_binary=asm_bin,
+    assembler_final=asm_final,
+    train_df=train_df,
+    city_medians_dict=fit_transform_city.city_medians_dict,
+    city_centers_dict=fit_transform_city.city_centers_dict,
+    global_median=fit_transform_city.global_median,
+    continuous_features=cont_features,
+    binary_features=bin_features,
+    performance_metrics=results[0] if results else {},
+    output_dir="./models",
+)
+
+print("\n✓ All pipeline artifacts saved successfully!")
+print("You can now use these models for prediction in the Flask backend.")
