@@ -1,14 +1,54 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 .venv/
 venv/
-.ipynb_checkpoints/
 *.egg-info/
-.DS_Store
-.coverage
-htmlcov/
-dist/
-build/
+.ipynb_checkpoints/
+.ruff_cache/
+
+# Data files (large datasets)
+data/raw/*.csv
+data/raw/*.tsv
+data/processed/**/*.parquet
+data/processed/**/*.csv
+
+# ML Models (large artifacts)
+models/production/
+models/experimental/
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+backend/database/debug_captures/
+
+# IDE
 .idea/
 .vscode/
+.DS_Store
+
+# Testing & Coverage
+.coverage
+htmlcov/
+.pytest_cache/
 *.log
+*_results.json
+
+# Build artifacts
+dist/
+build/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~

@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Airbnb Calendar Dots",
+  "version": "1.1",
+  "description": "Adds colored dots to dates in Airbnb's calendar picker",
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.airbnb.com/*",
+        "*://*.airbnb.co.uk/*",
+        "*://*.airbnb.ca/*",
+        "*://*.airbnb.de/*",
+        "*://*.airbnb.fr/*",
+        "*://*.airbnb.es/*",
+        "*://*.airbnb.it/*",
+        "*://*.airbnb.com.au/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "http://127.0.0.1:5001/*"
+  ],
+  "permissions": []
+}
