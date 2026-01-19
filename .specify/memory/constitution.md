@@ -1,50 +1,64 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report:
+- Version change: 0.0.0 -> 1.0.0
+- List of modified principles:
+  - Single File Architecture (New)
+  - Notebook-Style Structure (New)
+  - Logical Flow (New)
+  - Ephemeral Testing (New)
+- Added sections: None
+- Removed sections: None
+- Templates requiring updates:
+  - .specify/templates/tasks-template.md (✅ updated: reflects testing.py workflow)
+  - .specify/templates/plan-template.md (✅ compatible: generic Constitution Check gate)
+- Follow-up TODOs: None
+-->
+
+# Airbnb Data Transformation Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Single File Architecture
+The project must contain a single production file named `data_transformation.py`. No other code files are permitted for production use. This file serves as the sole artifact for the transformation pipeline.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Notebook-Style Structure
+`data_transformation.py` must be structured like a Jupyter notebook using the `py:percent` convention (e.g., `# %%`). This ensures compatibility with interactive execution environments while maintaining a script format.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Logical Flow
+The code must follow a strict logical order:
+1. **Definitions**: Functions for transformations and feature engineering.
+2. **Pipeline**: Machine Learning pipeline execution.
+3. **Training**: Model training and evaluation.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Ephemeral Testing Workflow
+All transformation features must be developed and tested in a separate `testing.py` file. This file is temporary and exists only during the development of a specific feature. Once the feature is verified, it is integrated into the main `data_transformation.py` file, and `testing.py` MUST be deleted.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. No Production Clutter
+Files other than `data_transformation.py` (and temporary `testing.py`) are strictly prohibited in the production path. The repository must remain clean of auxiliary scripts or unused modules.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Project Constraints
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### Technology Stack
+- **Language**: Python
+- **Format**: `py:percent` (Jupyter-compatible script)
+- **Primary File**: `data_transformation.py`
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+## Development Workflow
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### Feature Implementation Cycle
+1. Create `testing.py`.
+2. Implement and test the new feature or transformation in `testing.py`.
+3. Verify correctness.
+4. Integrate the code into the appropriate section (Definitions, Pipeline, or Training) of `data_transformation.py`.
+5. Run `data_transformation.py` to ensure full system integrity.
+6. Delete `testing.py`.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+### Amendment Procedure
+Amendments to this constitution require a version bump. Changes to the "Single File Architecture" or "Ephemeral Testing Workflow" are considered Major changes (X.0.0).
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+### Compliance
+All code contributions must be reviewed against these principles. Any PR containing persistent files other than `data_transformation.py` (e.g., leftover `testing.py` or utils) must be rejected.
+
+**Version**: 1.0.0 | **Ratified**: 2026-01-01 | **Last Amended**: 2026-01-01
