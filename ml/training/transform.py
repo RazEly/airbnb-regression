@@ -1247,7 +1247,7 @@ def visualize_city_clusters(spark_df, city_name="Greater London", sample_size=20
     and plots the clusters.
     """
     # 1. Filter and Sample in Spark (efficiently reduces data before collection)
-    city_data = spark_df.filter(F.col("city") == "Greater London")
+    city_data = spark_df.filter(F.col("city") == city_name)
 
     # Calculate fraction for sampling to hit roughly the sample_size
     total_count = city_data.count()
@@ -1294,8 +1294,12 @@ def visualize_city_clusters(spark_df, city_name="Greater London", sample_size=20
     plt.ylabel("Latitude")
     plt.legend(loc="upper right")
     plt.grid(True, linestyle="--", alpha=0.5)
-    plt.savefig("london.png")
-    plt.show()
+
+    # Create filename from city name (e.g., "Greater London" -> "greater_london_clusters.png")
+    filename = f"{city_name.lower().replace(' ', '_')}_clusters.png"
+    plt.savefig(filename)
+    print(f"  ✓ Saved {filename}")
+    plt.close()  # Close figure to free memory
 
 
 # Usage:
@@ -1349,6 +1353,20 @@ train_df = train_df.cache()
 train_df.count()
 val_df = val_df.cache()
 val_df.count()
+
+# Generate cluster visualizations for major cities
+print("\n" + "=" * 70)
+print("GENERATING CLUSTER VISUALIZATIONS")
+print("=" * 70)
+
+cities_to_visualize = ["Greater London", "Paris", "Austin"]
+for city in cities_to_visualize:
+    print(f"\nCreating visualization for {city}...")
+    visualize_city_clusters(train_df, city_name=city, sample_size=20000)
+
+print("\n" + "=" * 70)
+print("CLUSTER VISUALIZATIONS COMPLETE")
+print("=" * 70 + "\n")
 
 # NOW filter out null/invalid prices (after clustering is complete)
 print("Filtering out listings with null/invalid prices...")
