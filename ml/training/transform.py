@@ -1046,9 +1046,7 @@ def fit_transform_features(train_df, val_df, features=None):
     binary_imputed_cols = [f"{c}_imputed" for c in binary_features]
     imputer_binary = Imputer(
         inputCols=binary_features, outputCols=binary_imputed_cols
-    ).setStrategy(
-        "mode"
-    )  # Use mode for binary
+    ).setStrategy("mode")  # Use mode for binary
 
     imputer_binary_model = imputer_binary.fit(train_df)
     train_df = imputer_binary_model.transform(train_df)
@@ -1145,19 +1143,16 @@ def train_models(train_data, val_data):
             # 1. VISUALIZATION LOGIC
             # Optimized: Reduced sample size from 5000 to 1000 for faster visualization
             plot_df = (
-                predictions.select(
-                    "price_cleaned", "prediction", "price", "prediction_real"
-                )
+                predictions.select("price_cleaned", "prediction")
                 .sample(False, 0.1, seed=42)  # Adjust 0.1 based on data size
                 .limit(1000)  # Reduced from 5000 for faster plotting
                 .toPandas()
             )
 
-            # Create two subplots
-            fig, axes = plt.subplots(1, 2, figsize=(20, 6))
+            # Create single plot: Log-Log Scale
+            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
-            # First plot: Log-Log Scale
-            axes[0].scatter(
+            ax.scatter(
                 plot_df["price_cleaned"], plot_df["prediction"], alpha=0.4, color="teal"
             )
             min_val_log = min(
@@ -1166,40 +1161,21 @@ def train_models(train_data, val_data):
             max_val_log = max(
                 plot_df["price_cleaned"].max(), plot_df["prediction"].max()
             )
-            axes[0].plot(
+            ax.plot(
                 [min_val_log, max_val_log],
                 [min_val_log, max_val_log],
                 color="red",
                 linestyle="--",
                 label="Perfect Fit",
             )
-            axes[0].set_title(f"Log-Log Prediction vs Reality: {name}")
-            axes[0].set_xlabel("Actual Log(Price)")
-            axes[0].set_ylabel("Predicted Log(Price)")
-            axes[0].legend()
-            axes[0].grid(True, linestyle=":", alpha=0.6)
+            ax.set_title(f"Log-Log Prediction vs Reality: {name}")
+            ax.set_xlabel("Actual Log(Price)")
+            ax.set_ylabel("Predicted Log(Price)")
+            ax.legend()
+            ax.grid(True, linestyle=":", alpha=0.6)
 
-            # Second plot: Real Scale
-            axes[1].scatter(
-                plot_df["price"], plot_df["prediction_real"], alpha=0.4, color="blue"
-            )
-            min_val_real = min(plot_df["price"].min(), plot_df["prediction_real"].min())
-            max_val_real = max(plot_df["price"].max(), plot_df["prediction_real"].max())
-            axes[1].plot(
-                [min_val_real, max_val_real],
-                [min_val_real, max_val_real],
-                color="red",
-                linestyle="--",
-                label="Perfect Fit",
-            )
-            axes[1].set_title(f"Real Price Prediction vs Reality: {name}")
-            axes[1].set_xlabel("Actual Price")
-            axes[1].set_ylabel("Predicted Price")
-            axes[1].legend()
-            axes[1].grid(True, linestyle=":", alpha=0.6)
-
-            plt.tight_layout()  # Adjust layout to prevent overlap
-            plt.savefig("results.png")  # Save the figure
+            plt.tight_layout()
+            plt.savefig("results.png")
             # plt.show() # Do not show the plot
 
             evaluator = RegressionEvaluator(
