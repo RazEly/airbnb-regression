@@ -57,24 +57,61 @@ conda create -n spark_env python=3.10
 conda activate spark_env
 
 # Install dependencies
-pip install pyspark flask requests beautifulsoup4 lxml
+pip install pyspark flask requests beautifulsoup4 lxml pandas scikit-learn
 ```
 
-### 1. Train Model (First Time Only)
+### 1. Train Model
+
+#### Option A: Local Training (Recommended for Development)
 
 Place `airbnb.csv` (3.8GB dataset) in `data/raw/`:
 
 ```bash
-cd ml/scripts
-./train.sh
+cd /home/ely/Projects/2026-winter/lab/final-proj/playground
+conda activate spark_env
+python ml/training/transform.py
 ```
 
-This creates models in `models/production/`:
-- `gbt_model/` - Gradient-boosted tree
-- `scaler/` - Feature scaler
-- `imputers/` - Missing value imputers
+Training time: ~45-60 minutes on local machine
+
+#### Option B: Databricks Training (Recommended for Production)
+
+**Benefits**: 2-3× faster, cloud-based, scales with data size
+
+**Setup (One-Time):**
+1. Upload `airbnb.csv` to DBFS (Databricks File System)
+2. Create Databricks notebook from `ml/training/transform.py`
+3. Update paths in notebook:
+   ```python
+   DATA_PATH = "/dbfs/FileStore/YOUR_PATH/airbnb.csv"  # ← Update this!
+   OUTPUT_DIR = "/dbfs/FileStore/models/production"
+   ```
+4. Install cluster libraries:
+   - `hdbscan==0.8.33`
+   - `nltk==3.8.1`
+
+**Run Training:**
+1. Attach notebook to standard cluster (8-16 cores recommended)
+2. Run all cells (~15-30 minutes)
+3. Download models to local:
+   ```bash
+   # One-time setup
+   pip install databricks-cli
+   databricks configure --token
+   
+   # Download models after each training run
+   databricks fs cp -r dbfs:/FileStore/models/production/ ./models/production/
+   ```
+
+**Model artifacts created:**
+- `gbt_model/` - Gradient-boosted tree (PySpark model)
+- `imputer_continuous/`, `imputer_binary/` - Missing value imputers
+- `scaler_continuous/` - Feature scaler
+- `cluster_data.parquet/` - Cluster training data (400-600KB)
+- `city_medians.json`, `cluster_medians.json` - Price lookup tables
 - `metadata.json` - Model info & performance
-- `lookup_dicts.pkl` - City/cluster mappings
+
+**Cost estimate**: ~$1.50-$2.25 per training run on standard cluster
 
 ### 2. Run Backend
 

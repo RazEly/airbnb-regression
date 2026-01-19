@@ -40,40 +40,72 @@ from sklearn.neighbors import KNeighborsClassifier
 
 # %%
 # Configuration
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-DATA_PATH = PROJECT_ROOT / "data" / "raw" / "airbnb.csv"
-OUTPUT_DIR = PROJECT_ROOT / "models" / "production"
-SAMPLE_FRACTION = 1.0  # Use full dataset for production model training
+# Detect environment: Databricks or Local
+IS_DATABRICKS = False
+try:
+    # Check if running in Databricks
+    # dbutils is only available in Databricks notebooks
+    dbutils.fs.ls("/")  # type: ignore  # noqa: F821
+    IS_DATABRICKS = True
+    print("Detected Databricks environment")
+except:
+    IS_DATABRICKS = False
+    print("Detected local environment")
 
-print(f"Creating local Spark session...")
-print(f"Project root: {PROJECT_ROOT}")
-print(f"Data path: {DATA_PATH}")
-print(f"Output directory: {OUTPUT_DIR}")
+if IS_DATABRICKS:
+    # === DATABRICKS CONFIGURATION ===
+    # UPDATE THESE PATHS for your Databricks workspace
+    DATA_PATH = "/dbfs/FileStore/YOUR_PATH_HERE/airbnb.csv"  # ← CHANGE THIS!
+    OUTPUT_DIR = "/dbfs/FileStore/models/production"
+    SAMPLE_FRACTION = 1.0  # Use full dataset
 
-# Create local SparkSession
-spark = (
-    SparkSession.builder.appName("Airbnb Price Prediction - Local")
-    .master("local[*]")  # Use all available CPU cores
-    .config("spark.driver.memory", "8g")
-    .config("spark.executor.memory", "8g")
-    .config("spark.sql.shuffle.partitions", "200")
-    .config("spark.sql.adaptive.enabled", "true")
-    .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
-    .config("spark.sql.adaptive.skewJoin.enabled", "true")
-    .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    .config("spark.kryoserializer.buffer.max", "512m")
-    .config("spark.sql.autoBroadcastJoinThreshold", "10m")
-    .config("spark.sql.execution.arrow.pyspark.enabled", "true")
-    .config("spark.sql.repl.eagerEval.enabled", "true")
-    .getOrCreate()
-)
+    # Use existing Databricks Spark session
+    spark = SparkSession.getActiveSession()
+    if spark is None:
+        raise RuntimeError(
+            "No active Spark session found. Run this in Databricks notebook."
+        )
+
+    print(f"Data path: {DATA_PATH}")
+    print(f"Output directory: {OUTPUT_DIR}")
+    print(f"Using existing Databricks Spark session")
+
+else:
+    # === LOCAL CONFIGURATION ===
+    PROJECT_ROOT = Path(__file__).parent.parent.parent
+    DATA_PATH = PROJECT_ROOT / "data" / "raw" / "airbnb.csv"
+    OUTPUT_DIR = PROJECT_ROOT / "models" / "production"
+    SAMPLE_FRACTION = 1.0  # Use full dataset for production model training
+
+    print(f"Creating local Spark session...")
+    print(f"Project root: {PROJECT_ROOT}")
+    print(f"Data path: {DATA_PATH}")
+    print(f"Output directory: {OUTPUT_DIR}")
+
+    # Create local SparkSession
+    spark = (
+        SparkSession.builder.appName("Airbnb Price Prediction - Local")
+        .master("local[*]")  # Use all available CPU cores
+        .config("spark.driver.memory", "8g")
+        .config("spark.executor.memory", "8g")
+        .config("spark.sql.shuffle.partitions", "200")
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.sql.adaptive.skewJoin.enabled", "true")
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+        .config("spark.kryoserializer.buffer.max", "512m")
+        .config("spark.sql.autoBroadcastJoinThreshold", "10m")
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+        .config("spark.sql.repl.eagerEval.enabled", "true")
+        .getOrCreate()
+    )
 
 # Set log level
 spark.sparkContext.setLogLevel("ERROR")
 
-# Read CSV and sample 10% for local testing
+# Read CSV and sample
 print(f"Reading data from: {DATA_PATH}")
-print(f"Sampling {SAMPLE_FRACTION * 100:.0f}% of data for local testing...")
+print(f"Sampling {SAMPLE_FRACTION * 100:.0f}% of data...")
 
 # %%
 airbnb = (
@@ -1392,26 +1424,32 @@ print("=" * 70)
 
 from ml.training.save_model import save_pipeline_artifacts
 
+# Prepare performance metrics
+performance_metrics = {
+    "R2": results[0]["R2"],
+    "RMSE": results[0]["RMSE"],
+    "MAE": results[0]["MAE"],
+    "Train_R2": results[0]["Train_R2"],
+    "Train_RMSE": results[0]["Train_RMSE"],
+}
+
 # Save everything
 save_pipeline_artifacts(
-    gbt_model=best_model,
-    imputer_continuous=imputer_continuous,
-    imputer_binary=imputer_binary,
-    scaler_continuous=scaler_continuous,
-    assembler_continuous=assembler_continuous,
-    assembler_binary=assembler_binary,
-    assembler_final=assembler_final,
+    gbt_model=gbt_model,
+    imputer_continuous_model=imputer_cont,
+    imputer_binary_model=imputer_bin,
+    scaler_model=scaler,
+    assembler_continuous=asm_cont,
+    assembler_binary=asm_bin,
+    assembler_final=asm_final,
+    train_df=train_df,  # Pass DataFrame for Parquet save
     city_medians_dict=fit_transform_city.city_medians_dict,
     city_centers_dict=fit_transform_city.city_centers_dict,
-    cluster_medians_dict=fit_transform_cluster.cluster_medians_dict,
-    cluster_data_dict=fit_transform_cluster.cluster_data_dict,
-    top_cities_list=fit_transform_city.top_cities,
-    global_median_value=fit_transform_city.global_median,
+    global_median=fit_transform_city.global_median,
+    continuous_features=cont_features,
+    binary_features=bin_features,
+    performance_metrics=performance_metrics,
     output_dir=str(OUTPUT_DIR),
-    train_r2=train_r2,
-    train_rmse=train_rmse,
-    val_r2=val_r2,
-    val_rmse=val_rmse,
 )
 
 print("\n✓ All pipeline artifacts saved successfully!")

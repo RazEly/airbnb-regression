@@ -15,6 +15,7 @@ import json
 import os
 from typing import Optional, Dict, Any, Tuple
 
+import pandas as pd
 from pyspark.ml.regression import GBTRegressionModel
 from pyspark.ml.feature import ImputerModel, StandardScalerModel, VectorAssembler
 from sklearn.neighbors import KNeighborsClassifier
@@ -117,24 +118,27 @@ class ModelLoader:
         with open(f"{model_dir}/top_cities.json", "r") as f:
             self.top_cities = json.load(f)
 
-        # Load cluster data
-        print("  [6/7] Loading cluster data...")
-        with open(f"{model_dir}/cluster_data.json", "r") as f:
-            self.cluster_data = json.load(f)
+        # Load cluster data from Parquet
+        print("  [6/7] Loading cluster data from Parquet...")
+        cluster_pdf = pd.read_parquet(f"{model_dir}/cluster_data.parquet")
+        print(f"  - Loaded {len(cluster_pdf):,} cluster points")
 
         # Build KNN classifiers for cluster assignment (one per city)
         print("  [7/7] Building KNN classifiers for cluster assignment...")
         self.knn_models = {}
-        for city, points in self.cluster_data.items():
-            if len(points) > 0:
-                # points is [[lat, lon, cluster_id], ...]
-                X = np.array([[p[0], p[1]] for p in points])  # lat, lon
-                y = np.array([p[2] for p in points])  # cluster_id
+        for city in cluster_pdf["city"].unique():
+            city_data = cluster_pdf[cluster_pdf["city"] == city]
 
-                # Use KNN with k=1 for exact cluster assignment
-                knn = KNeighborsClassifier(n_neighbors=1, metric="euclidean")
-                knn.fit(X, y)
-                self.knn_models[city] = knn
+            # Extract coordinates and cluster IDs
+            X = city_data[["lat", "long"]].values
+            y = city_data["cluster_id"].values
+
+            # Use KNN with k=1 for exact cluster assignment (same as before)
+            knn = KNeighborsClassifier(n_neighbors=1, metric="euclidean")
+            knn.fit(X, y)
+            self.knn_models[city] = knn
+
+        print(f"  ✓ Built KNN models for {len(self.knn_models)} cities")
 
         # Load metadata
         with open(f"{model_dir}/metadata.json", "r") as f:
