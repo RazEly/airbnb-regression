@@ -75,7 +75,7 @@ else:
     PROJECT_ROOT = Path(__file__).parent.parent.parent
     DATA_PATH = PROJECT_ROOT / "data" / "raw" / "airbnb.csv"
     OUTPUT_DIR = PROJECT_ROOT / "models" / "production"
-    SAMPLE_FRACTION = 1.0  # Use full dataset for production model training
+    SAMPLE_FRACTION = 1.0  # Full dataset
 
     print(f"Creating local Spark session...")
     print(f"Project root: {PROJECT_ROOT}")
