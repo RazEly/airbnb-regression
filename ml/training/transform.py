@@ -1046,7 +1046,9 @@ def fit_transform_features(train_df, val_df, features=None):
     binary_imputed_cols = [f"{c}_imputed" for c in binary_features]
     imputer_binary = Imputer(
         inputCols=binary_features, outputCols=binary_imputed_cols
-    ).setStrategy("mode")  # Use mode for binary
+    ).setStrategy(
+        "mode"
+    )  # Use mode for binary
 
     imputer_binary_model = imputer_binary.fit(train_df)
     train_df = imputer_binary_model.transform(train_df)

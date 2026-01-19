@@ -64,7 +64,7 @@ pip install pyspark flask requests beautifulsoup4 lxml pandas scikit-learn
 
 #### Option A: Local Training (Recommended for Development)
 
-Place `airbnb.csv` (3.8GB dataset) in `data/raw/`:
+Place `airbnb.csv` in `data/raw/`:
 
 ```bash
 cd /home/ely/Projects/2026-winter/lab/final-proj/playground
