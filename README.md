@@ -9,7 +9,9 @@ airbnb-regression/
 ├── ml/                       # Machine learning pipeline
 │   ├── training/             # Data transformation & model training
 │   │   ├── __init__.py
-│   │   └── transform.py      # PySpark training pipeline
+│   │   ├── transform.py      # PySpark training pipeline
+│   │   ├── transform.ipynb   # Jupyter notebook version
+│   │   └── save_model.ipynb  # Model saving utilities
 │   ├── inference/            # Model loading & prediction
 │   │   ├── __init__.py
 │   │   ├── loader.py         # Load trained models
@@ -26,8 +28,8 @@ airbnb-regression/
 │   └── database/             # SQLite database
 │       ├── __init__.py
 │       ├── init_db.py        # Database initialization
-│       ├── listings.db       # SQLite database file
-│       └── debug_captures/   # Debug HTML captures
+│       ├── listings.db       # SQLite database file (gitignored)
+│       └── debug_captures/   # Debug HTML captures (gitignored)
 ├── extension/                # Chrome extension
 │   ├── manifest.json         # Extension configuration
 │   ├── content.js            # Content script (injected into pages)
@@ -42,7 +44,7 @@ airbnb-regression/
 │   ├── create_icons.html     # Icon generator
 │   ├── test_overlay.html     # Overlay testing
 │   └── README.md
-├── models/production/        # Trained models (162MB)
+├── models/production/        # Trained models (committed to repo)
 │   ├── gbt_model/            # Gradient-boosted tree model
 │   ├── imputer_continuous/   # Continuous feature imputer
 │   ├── imputer_binary/       # Binary feature imputer
@@ -61,7 +63,7 @@ airbnb-regression/
 └── README.md
 ```
 
-**Note**: Data files (`data/raw/`, `data/processed/`) are gitignored and not included in the repository.
+**Note**: Raw data files (`.csv`, `.parquet` in root or `data/` directory) and database files are gitignored. Trained models in `models/production/` are committed to the repository.
 
 ## Features
 
@@ -90,22 +92,37 @@ airbnb-regression/
 **System Requirements:**
 - Miniconda or Anaconda (conda package manager)
 - ~3GB disk space for environment
-- ~5GB for training data (airbnb.csv)
-- ~200MB for trained models
+- ~5GB for training data (airbnb.csv) - optional, only needed for training
+- ~200MB for trained models (already included in repository)
 
 **New to conda?** Install Miniconda (lightweight, recommended):
 - Linux/Mac: `wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash Miniconda3-latest-Linux-x86_64.sh`
 - Windows: Download from https://docs.conda.io/en/latest/miniconda.html
 
-### Setup Environment (Automated)
+### Setup Environment
 
-The easiest way to set up the project is using the provided init script:
+**Option 1: Using pip (Simple)**
 
 ```bash
-# Run the init script (creates conda environment with Python 3.10 + Java 17)
-./init.sh
+# Create and activate a virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Activate the environment
+# Install dependencies
+pip install -r requirements.txt
+```
+
+**Option 2: Using conda (Recommended for PySpark training)**
+
+If you have an `init.sh` script or `environment.yml` file:
+
+```bash
+# Using init script (if available)
+./init.sh
+conda activate ./conda-env
+
+# OR using environment file (if available)
+conda env create -p ./conda-env -f environment.yml
 conda activate ./conda-env
 
 # Verify setup
@@ -113,25 +130,9 @@ python -c "import pyspark; print('PySpark version:', pyspark.__version__)"
 java -version  # Should show OpenJDK 17
 ```
 
-The init script will:
-- Create a local conda environment at `./conda-env/` with Python 3.10 + OpenJDK 17
-- Install all dependencies (PySpark, Flask, scikit-learn, etc.)
-- Verify PySpark and Java compatibility
-- Skip setup if a compatible environment already exists (fast on subsequent runs)
+### 1. Train Model (Optional)
 
-### Manual Setup (Alternative)
-
-If you prefer manual setup:
-
-```bash
-# Create conda environment from file
-conda env create -p ./conda-env -f environment.yml
-
-# Activate environment
-conda activate ./conda-env
-```
-
-### 1. Train Model
+The repository includes pre-trained models in `models/production/`, so you can skip training and go directly to step 2 (Run Backend). Only train if you want to retrain on new data.
 
 #### Option A: Local Training (Recommended for Development)
 
@@ -187,10 +188,11 @@ Training time: ~45-60 minutes on local machine
 
 ### 2. Run Backend
 
-**IMPORTANT**: The backend requires Python 3.10 (not 3.14) and Java 8/11/17 due to PySpark compatibility.
-
 ```bash
-# Activate the conda environment (if not already activated)
+# Activate your environment (if using venv)
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# OR activate conda environment (if using conda)
 conda activate ./conda-env
 
 # Run the backend
@@ -200,7 +202,11 @@ python app.py
 
 Server runs on `http://localhost:5001`
 
-### 3. Test Prediction
+**Note**: If you encounter PySpark or Java errors, make sure you're using Python 3.10 and Java 8/11/17. The conda environment setup handles this automatically.
+
+### 3. Test Prediction (Optional)
+
+If you have test files in a `tests/` directory:
 
 ```bash
 # Run integration test
@@ -263,7 +269,8 @@ Predict price for a listing.
 
 **ML Training** (`ml/training/`):
 - `transform.py` - PySpark data transformation pipeline
-- `save_model.py` - Model serialization utilities
+- `transform.ipynb` - Jupyter notebook version of training pipeline
+- `save_model.ipynb` - Model serialization utilities
 
 **ML Inference** (`ml/inference/`):
 - `loader.py` - Load trained models from disk
@@ -276,6 +283,8 @@ Predict price for a listing.
 - `database/init_db.py` - Initialize SQLite schema
 
 ### Running Tests
+
+If you have test files:
 
 ```bash
 # Integration test (parser + ML pipeline)
@@ -319,7 +328,7 @@ model_dir = project_root / "models" / "production"
 
 ## Troubleshooting
 
-### Init script fails: "conda: command not found"
+### "conda: command not found" or conda not available
 You need to install Miniconda or Anaconda first:
 ```bash
 # Linux/Mac
@@ -329,27 +338,33 @@ bash Miniconda3-latest-Linux-x86_64.sh
 # Or visit: https://docs.conda.io/en/latest/miniconda.html
 ```
 
-### Init script fails: "conda env create failed"
-Try cleaning up and recreating:
-```bash
-rm -rf ./conda-env
-./init.sh
-```
+Alternatively, use pip with a virtual environment (see Setup Environment section).
 
 ### Backend fails with "TypeError: code() argument 13 must be str, not int"
-This error occurs when using Python 3.14+ with PySpark. **Solution**: Use the conda environment created by `init.sh`:
+This error occurs when using Python 3.14+ with PySpark. **Solution**: Use Python 3.10 or 3.11:
 ```bash
+# Option 1: Create conda environment with Python 3.10
+conda create -p ./conda-env python=3.10
 conda activate ./conda-env
-cd backend
-python app.py
+pip install -r requirements.txt
+
+# Option 2: Use pyenv or another Python version manager
 ```
 
 ### Backend fails with Java errors
-PySpark requires Java 8, 11, or 17. The conda environment includes OpenJDK 17. Verify you're using the conda environment:
+PySpark requires Java 8, 11, or 17. 
+
+**Option 1: Using conda (recommended)**
 ```bash
+conda create -p ./conda-env python=3.10 openjdk=17
 conda activate ./conda-env
+pip install -r requirements.txt
 java -version  # Should show "openjdk version 17"
 ```
+
+**Option 2: Install Java manually**
+- Install OpenJDK 17 from your package manager
+- Set JAVA_HOME environment variable
 
 ### `ModuleNotFoundError: No module named 'ml'`
 Ensure you're running from project root with proper `sys.path`:
@@ -360,9 +375,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 ```
 
 ### `FileNotFoundError: models/production/`
-Run training script first:
+The pre-trained models should be included in the repository. If missing, you need to train them first:
 ```bash
-cd ml/scripts && ./train.sh
+# Place airbnb.csv in the project root or data/raw/
+python ml/training/transform.py
 ```
 
 ### Backend returns "Unknown city"

@@ -12,16 +12,18 @@ conda-env/
 .ruff_cache/
 
 # Data files (large datasets)
-data/raw/*.csv
-data/raw/*.tsv
-data/processed/**/*.parquet
-data/processed/**/*.csv
-data/processed/**/*.crc
-data/processed/**/_SUCCESS
+data/
+*.csv
+*.parquet
 
 # ML Models (large artifacts)
-models/production/
-models/experimental/
+# Note: models/production/ is committed because it contains trained models
+# If you want to exclude models, uncomment the lines below:
+# models/production/gbt_model/
+# models/production/imputer_*/
+# models/production/scaler_*/
+# models/production/cluster_data.parquet/
+# models/production/calendar/
 *.pkl
 *.joblib
 *.h5
@@ -56,5 +58,9 @@ build/
 *.swp
 *~
 
-*.csv
-*.parquet
+# Node modules (if any)
+node_modules/
+
+# Environment files
+.env
+.env.local

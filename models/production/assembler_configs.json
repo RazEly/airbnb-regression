@@ -1,0 +1,40 @@
+{
+  "assembler_continuous": {
+    "input_cols": [
+      "num_baths_imputed",
+      "num_bedrooms_imputed",
+      "num_beds_imputed",
+      "ratings_imputed",
+      "bed_to_bedroom_ratio_imputed",
+      "review_volume_quality_imputed",
+      "host_rating_imputed",
+      "rooms_per_guest_imputed",
+      "total_rooms_imputed",
+      "cluster_median_imputed",
+      "host_year_imputed",
+      "beds_per_guest_imputed",
+      "superhost_rating_interaction_imputed",
+      "amenities_count_imputed",
+      "host_number_of_reviews_imputed",
+      "bedrooms_per_guest_imputed",
+      "property_number_of_reviews_imputed",
+      "guest_capacity_ratio_imputed",
+      "guests_imputed"
+    ],
+    "output_col": "features_continuous_raw"
+  },
+  "assembler_binary": {
+    "input_cols": [
+      "is_superhost_binary_imputed",
+      "is_studio_binary_imputed"
+    ],
+    "output_col": "features_binary"
+  },
+  "assembler_final": {
+    "input_cols": [
+      "features_continuous_scaled",
+      "features_binary"
+    ],
+    "output_col": "features"
+  }
+}

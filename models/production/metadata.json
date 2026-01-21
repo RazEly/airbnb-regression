@@ -1,0 +1,38 @@
+{
+  "training_date": "2026-01-21T17:12:30.868438",
+  "continuous_features": [
+    "num_baths",
+    "num_bedrooms",
+    "num_beds",
+    "ratings",
+    "bed_to_bedroom_ratio",
+    "review_volume_quality",
+    "host_rating",
+    "rooms_per_guest",
+    "total_rooms",
+    "cluster_median",
+    "host_year",
+    "beds_per_guest",
+    "superhost_rating_interaction",
+    "amenities_count",
+    "host_number_of_reviews",
+    "bedrooms_per_guest",
+    "property_number_of_reviews",
+    "guest_capacity_ratio",
+    "guests"
+  ],
+  "binary_features": [
+    "is_superhost_binary",
+    "is_studio_binary"
+  ],
+  "performance_metrics": {
+    "R2": 0.6041433009780138,
+    "RMSE": 0.5638492149377189,
+    "MAE": 0.42455736089000173,
+    "Train_R2": 0.6779581730751032,
+    "Train_RMSE": 0.5129750844053115
+  },
+  "num_cities": 100,
+  "num_clusters": 2596,
+  "global_median": 5.0106352940962555
+}
