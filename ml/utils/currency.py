@@ -1,44 +1,38 @@
 """
 Currency Converter Module
-
-Provides static exchange rate conversion to USD for ML model inference.
-All prices must be converted to USD before feeding to the model.
-
-Author: ML Integration Team
-Date: 2026-01-19
 """
 
-# Static exchange rates to USD (approximate rates as of 2026)
-# These are rough estimates for demonstration - ideally should use an API
+# Updated exchange rates to USD (Current as of January 21, 2026)
+# Note: Rates represent the value of 1 unit of the currency in USD.
 EXCHANGE_RATES_TO_USD = {
     "USD": 1.0,
-    "EUR": 1.10,  # 1 EUR = ~1.10 USD
-    "GBP": 1.27,  # 1 GBP = ~1.27 USD
-    "CAD": 0.74,  # 1 CAD = ~0.74 USD
-    "AUD": 0.67,  # 1 AUD = ~0.67 USD
-    "NZD": 0.62,  # 1 NZD = ~0.62 USD
-    "MXN": 0.056,  # 1 MXN = ~0.056 USD
-    "SGD": 0.75,  # 1 SGD = ~0.75 USD
-    "HKD": 0.13,  # 1 HKD = ~0.13 USD
-    "TWD": 0.033,  # 1 TWD = ~0.033 USD
-    "BRL": 0.20,  # 1 BRL = ~0.20 USD
-    "CHF": 1.15,  # 1 CHF = ~1.15 USD
-    "PHP": 0.018,  # 1 PHP = ~0.018 USD
-    "KRW": 0.00077,  # 1 KRW = ~0.00077 USD
-    "JPY": 0.0068,  # 1 JPY = ~0.0068 USD
-    "CNY": 0.14,  # 1 CNY = ~0.14 USD
-    "INR": 0.012,  # 1 INR = ~0.012 USD
-    "TRY": 0.029,  # 1 TRY = ~0.029 USD
-    "VND": 0.000040,  # 1 VND = ~0.000040 USD
-    "ILS": 0.32,  # 1 ILS = ~0.27 USD
-    "SEK": 0.096,  # 1 SEK = ~0.096 USD
-    "NOK": 0.094,  # 1 NOK = ~0.094 USD
-    "DKK": 0.15,  # 1 DKK = ~0.15 USD
-    "PLN": 0.25,  # 1 PLN = ~0.25 USD
-    "CZK": 0.044,  # 1 CZK = ~0.044 USD
-    "THB": 0.029,  # 1 THB = ~0.029 USD
-    "MYR": 0.22,  # 1 MYR = ~0.22 USD
-    "ZAR": 0.055,  # 1 ZAR = ~0.055 USD
+    "EUR": 1.1704,  # 1 EUR = ~1.17 USD
+    "GBP": 1.3428,  # 1 GBP = ~1.34 USD
+    "CAD": 0.7238,  # 1 CAD = ~0.72 USD
+    "AUD": 0.6763,  # 1 AUD = ~0.68 USD
+    "NZD": 0.4975,  # 1 NZD = ~0.50 USD
+    "MXN": 0.0567,  # 1 MXN = ~0.057 USD
+    "SGD": 0.6648,  # 1 SGD = ~0.66 USD
+    "HKD": 0.1282,  # 1 HKD = ~0.13 USD
+    "TWD": 0.0312,  # 1 TWD = ~0.031 USD
+    "BRL": 0.1878,  # 1 BRL = ~0.19 USD
+    "CHF": 1.2609,  # 1 CHF = ~1.26 USD
+    "PHP": 0.0144,  # 1 PHP = ~0.014 USD
+    "KRW": 0.000577,  # 1 KRW = ~0.00058 USD
+    "JPY": 0.00633,  # 1 JPY = ~0.0063 USD
+    "CNY": 0.1436,  # 1 CNY = ~0.14 USD
+    "INR": 0.0110,  # 1 INR = ~0.011 USD
+    "TRY": 0.0197,  # 1 TRY = ~0.020 USD
+    "VND": 0.000039,  # 1 VND = ~0.000039 USD
+    "ILS": 0.3152,  # 1 ILS = ~0.32 USD
+    "SEK": 0.1093,  # 1 SEK = ~0.11 USD
+    "NOK": 0.0851,  # 1 NOK = ~0.085 USD
+    "DKK": 0.1567,  # 1 DKK = ~0.16 USD
+    "PLN": 0.2773,  # 1 PLN = ~0.28 USD
+    "CZK": 0.0481,  # 1 CZK = ~0.048 USD
+    "THB": 0.0322,  # 1 THB = ~0.032 USD
+    "MYR": 0.2103,  # 1 MYR = ~0.21 USD
+    "ZAR": 0.0608,  # 1 ZAR = ~0.061 USD
 }
 
 

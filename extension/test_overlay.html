@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Overlay</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <h1>Overlay Test Page</h1>
+  <p>Open console to see logs</p>
+  
+  <button onclick="testGoodDeal()">Test Good Deal</button>
+  <button onclick="testBadDeal()">Test Bad Deal</button>
+  <button onclick="testFairPrice()">Test Fair Price</button>
+  <button onclick="testError()">Test Error</button>
+  
+  <script src="overlay.js"></script>
+  <script>
+    function testGoodDeal() {
+      const prediction = {
+        stoplight: 'good',
+        predicted_price_per_night_usd: 332.38,
+        listed_price_per_night_usd: 112.73,
+        difference_usd: -219.65,
+        difference_pct: -194.9,
+        city: 'Greater London',
+        cluster_id: 48,
+        currency: 'USD'
+      };
+      window.AirbnbPredictionOverlay.updateForListing('test123', prediction);
+    }
+    
+    function testBadDeal() {
+      const prediction = {
+        stoplight: 'bad',
+        predicted_price_per_night_usd: 200.00,
+        listed_price_per_night_usd: 350.00,
+        difference_usd: 150.00,
+        difference_pct: 75.0,
+        city: 'Paris',
+        cluster_id: 87,
+        currency: 'USD'
+      };
+      window.AirbnbPredictionOverlay.updateForListing('test456', prediction);
+    }
+    
+    function testFairPrice() {
+      const prediction = {
+        stoplight: 'neutral',
+        predicted_price_per_night_usd: 250.00,
+        listed_price_per_night_usd: 245.00,
+        difference_usd: -5.00,
+        difference_pct: -2.0,
+        city: 'New York',
+        cluster_id: 142,
+        currency: 'USD'
+      };
+      window.AirbnbPredictionOverlay.updateForListing('test789', prediction);
+    }
+    
+    function testError() {
+      const prediction = {
+        error: 'Missing critical fields: lat, long'
+      };
+      window.AirbnbPredictionOverlay.updateForListing('test999', prediction);
+    }
+  </script>
+</body>
+</html>

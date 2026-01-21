@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Airbnb Price Predictor</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 320px;
+      font-family: Circular, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif;
+      color: #222;
+      background: #fff;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #ff385c 0%, #e61e4d 100%);
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .header p {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+
+    .content {
+      padding: 20px;
+    }
+
+    .status-section {
+      margin-bottom: 20px;
+    }
+
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px;
+      margin-bottom: 8px;
+      background: #f7f7f7;
+      border-radius: 8px;
+    }
+
+    .status-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #484848;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .dot.connected {
+      background-color: #10b981;
+    }
+
+    .dot.disconnected {
+      background-color: #ef4444;
+    }
+
+    .features-section {
+      margin-bottom: 20px;
+    }
+
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: #222;
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: start;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid #ebebeb;
+    }
+
+    .feature-item:last-child {
+      border-bottom: none;
+    }
+
+    .feature-icon {
+      font-size: 18px;
+    }
+
+    .feature-text {
+      flex: 1;
+    }
+
+    .feature-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #222;
+      margin-bottom: 2px;
+    }
+
+    .feature-desc {
+      font-size: 11px;
+      color: #717171;
+      line-height: 1.4;
+    }
+
+    .footer {
+      padding: 16px 20px;
+      background: #f7f7f7;
+      border-top: 1px solid #ebebeb;
+      text-align: center;
+    }
+
+    .version {
+      font-size: 10px;
+      color: #b0b0b0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .link {
+      color: #ff385c;
+      text-decoration: none;
+      font-size: 11px;
+      font-weight: 600;
+      margin-top: 8px;
+      display: inline-block;
+    }
+
+    .link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Airbnb Price Predictor</h1>
+    <p>ML-powered price analysis</p>
+  </div>
+
+  <div class="content">
+    <div class="status-section">
+      <div class="status-item">
+        <span class="status-label">Backend Status</span>
+        <div class="status-indicator">
+          <span class="dot" id="backend-dot"></span>
+          <span id="backend-status">Checking...</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="features-section">
+      <h2 class="section-title">Features</h2>
+      
+      <div class="feature-item">
+        <span class="feature-icon">🎯</span>
+        <div class="feature-text">
+          <div class="feature-title">Price Predictions</div>
+          <div class="feature-desc">Get ML-powered price predictions for any Airbnb listing</div>
+        </div>
+      </div>
+
+      <div class="feature-item">
+        <span class="feature-icon">🚦</span>
+        <div class="feature-text">
+          <div class="feature-title">Stoplight Indicators</div>
+          <div class="feature-desc">See if a listing is a good deal, fair, or overpriced at a glance</div>
+        </div>
+      </div>
+
+      <div class="feature-item">
+        <span class="feature-icon">📅</span>
+        <div class="feature-text">
+          <div class="feature-title">Calendar Coloring</div>
+          <div class="feature-desc">Color-coded calendar dates based on historical pricing data</div>
+        </div>
+      </div>
+
+      <div class="feature-item">
+        <span class="feature-icon">🌍</span>
+        <div class="feature-text">
+          <div class="feature-title">Global Coverage</div>
+          <div class="feature-desc">Trained on 105,000+ cities worldwide</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="version">Version 2.0</div>
+    <a href="https://github.com/yourusername/airbnb-price-predictor" class="link" target="_blank">View on GitHub</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

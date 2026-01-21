@@ -82,6 +82,20 @@ class PricePredictor:
         self.model_loader = ModelLoader(self.spark, model_dir)
         logger.info("  ✓ All models loaded")
 
+        # Step 2.5: Load calendar data for date-based adjustments
+        logger.info("\n[2.5/3] Loading calendar adjustment data...")
+        calendar_path = os.path.join(model_dir, "calendar")
+        if os.path.exists(calendar_path):
+            from ml.inference.calendar_loader import CalendarLoader
+
+            self.calendar_loader = CalendarLoader(calendar_path)
+            logger.info("  ✓ Calendar data loaded")
+        else:
+            logger.warning(
+                f"  ⚠ Calendar data not found at {calendar_path}, date adjustments disabled"
+            )
+            self.calendar_loader = None
+
         # Step 3: Define schema for inference
         logger.info("\n[3/3] Setting up inference pipeline...")
         self._setup_schema()
@@ -93,30 +107,33 @@ class PricePredictor:
 
     def _setup_schema(self):
         """Define Spark DataFrame schema for features."""
-        # Schema matches the 19 features (18 continuous + 1 binary)
+        # Schema matches the 21 features (19 continuous + 2 binary)
+        # Order MUST match metadata.json exactly for VectorAssembler
         self.feature_schema = StructType(
             [
-                # Continuous features
-                StructField("review_volume_quality", DoubleType(), True),
-                StructField("num_bedrooms", DoubleType(), True),
-                StructField("median_city", DoubleType(), True),
-                StructField("loc_details_length_logp1", DoubleType(), True),
-                StructField("guests", DoubleType(), True),
-                StructField("amenities_count", DoubleType(), True),
-                StructField("description_length_logp1", DoubleType(), True),
-                StructField("cluster_median", DoubleType(), True),
-                StructField("host_number_of_reviews", DoubleType(), True),
-                StructField("ratings", DoubleType(), True),
-                StructField("host_rating", DoubleType(), True),
-                StructField("host_year", DoubleType(), True),
-                StructField("rooms_per_guest", DoubleType(), True),
-                StructField("property_number_of_reviews", DoubleType(), True),
-                StructField("total_rooms", DoubleType(), True),
-                StructField("lat", DoubleType(), True),
-                StructField("long", DoubleType(), True),
+                # Continuous features (19)
                 StructField("num_baths", DoubleType(), True),
-                # Binary feature
+                StructField("num_bedrooms", DoubleType(), True),
+                StructField("num_beds", DoubleType(), True),
+                StructField("ratings", DoubleType(), True),
+                StructField("bed_to_bedroom_ratio", DoubleType(), True),
+                StructField("review_volume_quality", DoubleType(), True),
+                StructField("host_rating", DoubleType(), True),
+                StructField("rooms_per_guest", DoubleType(), True),
+                StructField("total_rooms", DoubleType(), True),
+                StructField("cluster_median", DoubleType(), True),
+                StructField("host_year", DoubleType(), True),
+                StructField("beds_per_guest", DoubleType(), True),
+                StructField("superhost_rating_interaction", DoubleType(), True),
+                StructField("amenities_count", DoubleType(), True),
+                StructField("host_number_of_reviews", DoubleType(), True),
+                StructField("bedrooms_per_guest", DoubleType(), True),
+                StructField("property_number_of_reviews", DoubleType(), True),
+                StructField("guest_capacity_ratio", DoubleType(), True),
+                StructField("guests", DoubleType(), True),
+                # Binary features (2)
                 StructField("is_superhost_binary", IntegerType(), True),
+                StructField("is_studio_binary", IntegerType(), True),
             ]
         )
 
@@ -275,15 +292,51 @@ class PricePredictor:
 
             # Extract prediction
             prediction_row = predictions.select("prediction").first()
-            log_price = prediction_row[0]
+            log_price_base = prediction_row[0]
 
-            # Step 9: Inverse log transform
-            predicted_price_usd = np.expm1(log_price)
+            # Step 9a: Apply calendar adjustment (in log space)
+            calendar_adjustment = 0.0
+            check_in_date = data.get("check_in")
+            # Use parsed city from HTML (broader, e.g., "Greater London")
+            # instead of ML-matched city (specific, e.g., "Vauxhall")
+            parsed_city = data.get("city", "Unknown")
+            ml_city = features.get("city_name", "Unknown")
+
+            if self.calendar_loader and check_in_date and parsed_city:
+                calendar_adjustment = self.calendar_loader.get_adjustment(
+                    city=parsed_city, date=check_in_date
+                )
+                if verbose:
+                    if calendar_adjustment != 0:
+                        logger.info(
+                            f"\n  Calendar adjustment for {parsed_city} on {check_in_date}: {calendar_adjustment:+.4f} (log space)"
+                        )
+                    else:
+                        logger.info(
+                            f"\n  No calendar adjustment available for {parsed_city} on {check_in_date}"
+                        )
+
+            log_price_adjusted = log_price_base + calendar_adjustment
+
+            # Step 9b: Inverse log transform
+            predicted_price_base_usd = np.expm1(log_price_base)
+            predicted_price_usd = np.expm1(log_price_adjusted)
 
             if verbose:
-                logger.info(
-                    f"  ✓ Prediction complete: ${predicted_price_usd:.2f} USD/night"
-                )
+                if calendar_adjustment != 0:
+                    adjustment_dollars = predicted_price_usd - predicted_price_base_usd
+                    adjustment_pct = (
+                        adjustment_dollars / predicted_price_base_usd
+                    ) * 100
+                    logger.info(f"  Base prediction: ${predicted_price_base_usd:.2f}")
+                    logger.info(
+                        f"  Calendar impact: {adjustment_dollars:+.2f} ({adjustment_pct:+.1f}%)"
+                    )
+                    logger.info(f"  Final prediction: ${predicted_price_usd:.2f}")
+                else:
+                    logger.info(
+                        f"  ✓ Prediction complete: ${predicted_price_usd:.2f} USD/night"
+                    )
 
             # Step 10: Calculate comparison metrics
             difference_usd = predicted_price_usd - listed_price_usd
@@ -296,6 +349,11 @@ class PricePredictor:
             # Return results
             return {
                 "predicted_price_per_night_usd": predicted_price_usd,
+                "predicted_price_base_usd": predicted_price_base_usd,
+                "calendar_adjustment_log": calendar_adjustment,
+                "calendar_adjustment_usd": predicted_price_usd
+                - predicted_price_base_usd,
+                "check_in_date": check_in_date,
                 "listed_price_per_night_usd": listed_price_usd,
                 "difference_usd": difference_usd,
                 "difference_pct": difference_pct,
@@ -318,6 +376,10 @@ class PricePredictor:
 
     def __del__(self):
         """Clean up Spark session on shutdown."""
-        if hasattr(self, "spark"):
-            self.spark.stop()
-            logger.info("SparkSession stopped")
+        try:
+            if hasattr(self, "spark"):
+                self.spark.stop()
+                logger.info("SparkSession stopped")
+        except (ImportError, AttributeError):
+            # Python is shutting down, ignore cleanup errors
+            pass

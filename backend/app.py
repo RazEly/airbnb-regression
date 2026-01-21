@@ -1,12 +1,13 @@
+import json
+import logging
+import os
+import sqlite3
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import sqlite3
-from datetime import datetime, timedelta
-import json
-import os
-import sys
-import logging
-from pathlib import Path
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent
@@ -34,6 +35,28 @@ def get_db_connection():
     return conn
 
 
+def calculate_stoplight(difference_pct: float) -> str:
+    """
+    Calculate stoplight indicator based on price difference percentage.
+
+    Args:
+        difference_pct: Percentage difference (predicted - listed) / listed * 100
+                       Positive = Predicted > Listed (good deal - paying less than worth)
+                       Negative = Predicted < Listed (overpriced - paying more than worth)
+
+    Returns:
+        'good': Predicted > Listed (saving money, good deal)
+        'neutral': Predicted ≈ Listed (fair price)
+        'bad': Predicted < Listed (overpriced, bad deal)
+    """
+    if difference_pct > 10:  # Predicted > Listed by >10% → Good deal
+        return "good"
+    elif difference_pct < -10:  # Predicted < Listed by >10% → Overpriced
+        return "bad"
+    else:
+        return "neutral"
+
+
 import difflib
 
 
@@ -45,7 +68,6 @@ def health_check():
 @app.route("/colors", methods=["GET"])
 def get_colors():
     location_input = request.args.get("location")
-    print(f"DEBUG: Received request for location: '{location_input}'")
 
     conn = get_db_connection()
     try:
@@ -56,8 +78,6 @@ def get_colors():
             # Get all available locations
             cursor = conn.execute("SELECT DISTINCT location FROM locations")
             db_locations = [row["location"] for row in cursor.fetchall()]
-
-            print(f"DEBUG: Available cities in DB: {len(db_locations)}")
 
             best_score = 0
             best_match = None
@@ -93,12 +113,28 @@ def get_colors():
             print(
                 f"DEBUG: Matched input '{location_input}' to DB location '{matched_location}'"
             )
+            # Query returns MM-DD dates from database
             cursor = conn.execute(
                 "SELECT date, color FROM locations WHERE location = ?",
                 (matched_location,),
             )
             rows = cursor.fetchall()
-            result = {row["date"]: row["color"] for row in rows}
+
+            # Build lookup map: MM-DD -> color
+            mm_dd_to_color = {row["date"]: row["color"] for row in rows}
+
+            # Expand to full YYYY-MM-DD dates for next 2 years
+            result = {}
+            start_date = datetime.now()
+            for i in range(365 * 2):
+                current_date = start_date + timedelta(days=i)
+                date_str = current_date.strftime("%Y-%m-%d")  # Full date for response
+                mm_dd = current_date.strftime("%m-%d")  # Extract MM-DD for lookup
+
+                # Lookup color by MM-DD
+                color = mm_dd_to_color.get(mm_dd, "airbnb-day-green")
+                result[date_str] = color
+
             return jsonify(result)
         else:
             print(
@@ -140,14 +176,6 @@ def ingest_listing():
     try:
         with open(debug_html_path, "w", encoding="utf-8") as f:
             f.write(html)
-        print(f"\n{'=' * 70}")
-        print(f"DEBUG: Saved HTML to {debug_html_path}")
-        print(f"DEBUG: HTML length: {len(html):,} chars")
-        print(f"DEBUG: Listing ID: {listing_id}")
-        print(f"DEBUG: URL: {url}")
-        print(f"DEBUG: HTML preview (first 500 chars):")
-        print(html[:500])
-        print(f"{'=' * 70}\n")
     except Exception as e:
         print(f"WARNING: Failed to save debug HTML: {e}")
 
@@ -164,12 +192,12 @@ def ingest_listing():
         try:
             with open(debug_json_path, "w", encoding="utf-8") as f:
                 json.dump(parsed, f, indent=2, default=str)
-            print(f"DEBUG: Saved extraction results to {debug_json_path}")
         except Exception as e:
             print(f"WARNING: Failed to save debug JSON: {e}")
         log_listing_summary(parsed)
 
         # === NEW: Run ML prediction ===
+        prediction_result = None
         if predictor is not None:
             try:
                 print("\n" + "=" * 70)
@@ -178,22 +206,28 @@ def ingest_listing():
                 prediction_result = predictor.predict(parsed, verbose=True)
                 if "error" not in prediction_result:
                     print_prediction_summary(prediction_result)
-                else:
-                    print(f"\n⚠ Prediction skipped: {prediction_result['error']}\n")
+                    # Add stoplight indicator
+                    diff_pct = prediction_result.get("difference_pct", 0)
+                    prediction_result["stoplight"] = calculate_stoplight(diff_pct)
             except Exception as pred_error:
-                print(f"\n⚠ WARNING: Prediction failed: {pred_error}")
                 import traceback
 
                 traceback.print_exc()
+                prediction_result = {"error": str(pred_error)}
 
+        # Build response with prediction data
         response = {"status": "ok", **parsed}
+        if prediction_result and "error" not in prediction_result:
+            response["prediction"] = prediction_result
+        elif prediction_result and "error" in prediction_result:
+            response["prediction"] = {"error": prediction_result["error"]}
+
         if not response.get("summary", {}).get("populated_fields"):
             response["status"] = "warning"
         return jsonify(response)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception as exc:
-        print(f"ERROR: Failed to parse listing: {exc}")
+    except Exception:
         return jsonify({"error": "Failed to parse listing"}), 500
 
 
@@ -221,17 +255,12 @@ def log_listing_summary(parsed_listing):
         ("Host Rating", data.get("host_rating")),
         ("Host Reviews", data.get("host_number_of_reviews")),
         ("Host Year", data.get("host_year")),
-        ("Years Hosting", data.get("years_hosting")),
         ("Response Rate", data.get("host_response_rate")),
         ("Superhost", data.get("is_superhost")),
         ("Details Count", len(data.get("details") or [])),
         ("Reviews Count", len(data.get("reviews") or [])),
     ]
 
-    print("\n=== Parsed Listing Snapshot ===")
-    print(
-        f"Listing ID: {parsed_listing.get('listing_id')} | URL: {parsed_listing.get('url')}"
-    )
     width = max(len(label) for label, _ in highlight_fields) + 2
     for label, value in highlight_fields:
         print(f"{label:<{width}} {format_value(value)}")
@@ -265,7 +294,7 @@ def print_prediction_summary(result: dict):
     lat = result.get("features", {}).get("lat", None)
     lon = result.get("features", {}).get("long", None)
 
-    print(f"\nLocation:")
+    print("\nLocation:")
     if lat is not None and lon is not None:
         print(f"  Coordinates: ({lat:.4f}, {lon:.4f})")
         print(f"  Nearest City: {city} (matched by distance)")
@@ -279,35 +308,57 @@ def print_prediction_summary(result: dict):
     diff_usd = result.get("difference_usd", 0)
     diff_pct = result.get("difference_pct", 0)
 
-    print(f"\nPrice Comparison:")
+    print("\nPrice Comparison:")
+
+    # Check if calendar adjustment was applied
+    calendar_adj_usd = result.get("calendar_adjustment_usd", 0)
+    calendar_adj_log = result.get("calendar_adjustment_log", 0)
+    predicted_base = result.get("predicted_price_base_usd")
+    check_in = result.get("check_in_date")
+
+    # Show calendar adjustment details if present
+    if predicted_base and calendar_adj_log != 0:
+        print(f"  Check-in Date:     {check_in}")
+        print(f"  Base Prediction:   ${predicted_base:.2f} USD/night")
+        print(
+            f"  Date Adjustment:   {calendar_adj_usd:+.2f} ({(calendar_adj_usd / predicted_base) * 100:+.1f}%)"
+        )
+        print(f"  Final Prediction:  ${predicted:.2f} USD/night")
+
+        # Interpretation
+        if calendar_adj_usd > 10:
+            print(f"  Season Impact: PEAK SEASON (${calendar_adj_usd:.2f} premium)")
+        elif calendar_adj_usd < -10:
+            print(f"Season Impact: LOW SEASON (${abs(calendar_adj_usd):.2f} discount)")
+        else:
+            print("Season Impact: NORMAL SEASON")
+        print()
+
     print(f"  Listed Price:    ${listed:.2f} USD/night")
-    print(f"  Predicted Price: ${predicted:.2f} USD/night")
+    if not (predicted_base and calendar_adj_log != 0):
+        print(f"  Predicted Price: ${predicted:.2f} USD/night")
     print(f"  Difference:      ${diff_usd:+.2f} ({diff_pct:+.1f}%)")
 
-    # Assessment
     if diff_pct > 10:
+        deal_amount = abs(diff_usd) if listed and predicted else 0
+        print(f"  Assessment:      ✓ GOOD DEAL (${deal_amount:.2f} below expected)")
+    elif diff_pct < -10:
         overpriced_amount = abs(diff_usd) if listed and predicted else 0
         print(
             f"  Assessment:      ⚠ OVERPRICED (${overpriced_amount:.2f} more than expected)"
         )
-    elif diff_pct < -10:
-        deal_amount = abs(diff_usd) if listed and predicted else 0
-        print(f"  Assessment:      ✓ GOOD DEAL (${deal_amount:.2f} below expected)")
     else:
-        print(f"  Assessment:      ≈ FAIR PRICE")
+        print("  Assessment:      ≈ FAIR PRICE")
 
     # Original currency info
     currency = result.get("currency")
     listed_original = result.get("listed_price_original")
     if currency and currency != "USD" and listed_original:
-        print(f"\nOriginal Currency:")
+        print("\nOriginal Currency:")
         print(f"  Listed: {listed_original:.2f} {currency}/night")
 
     # Feature summary - show ALL 19 features
     features = result.get("features", {})
-    print(f"\n" + "=" * 70)
-    print("ENGINEERED FEATURES (19 total)")
-    print("=" * 70)
 
     print("\nContinuous Features (18):")
     continuous_features = [
@@ -356,44 +407,23 @@ def print_prediction_summary(result: dict):
 
 
 if __name__ == "__main__":
-    print("=" * 70)
-    print("AIRBNB PRICE PREDICTION BACKEND")
-    print("=" * 70)
-    print(f"Database: {DB_PATH}")
-
-    # Initialize ML predictor
-    print("\n" + "=" * 70)
-    print("INITIALIZING ML PREDICTOR")
-    print("=" * 70)
-
     try:
-        # Import here to avoid loading PySpark unless running as main
         from ml.inference import PricePredictor
 
-        # Model directory is at project_root/models/production/
         model_dir = project_root / "models" / "production"
 
         if not model_dir.exists():
-            print(f"\n⚠ WARNING: Model directory not found: {model_dir}")
-            print("ML predictions will be disabled.")
             predictor = None
         else:
-            print(f"\nLoading models from: {model_dir}")
             predictor = PricePredictor(str(model_dir))
-            print("\n✓ ML predictor initialized successfully!")
+            print("ML predictor initialized successfully")
     except Exception as e:
-        print(f"\n⚠ WARNING: Failed to initialize ML predictor: {e}")
-        print("ML predictions will be disabled. Parser will still work.")
+        print(f"Failed to initialize ML predictor: {e}")
         import traceback
 
         traceback.print_exc()
         predictor = None
 
-    print("\n" + "=" * 70)
     print("STARTING FLASK SERVER")
-    print("=" * 70)
-    print("Backend server starting on port 5001...")
-    print("Ready to receive listing data from Chrome extension")
-    print("=" * 70 + "\n")
 
     app.run(debug=True, port=5001)

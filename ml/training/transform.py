@@ -1,22 +1,31 @@
-# %%
+# Databricks notebook source
+# MAGIC %md
+# MAGIC ## Imports and Setup
+
+# COMMAND ----------
+
+# MAGIC %pip install hdbscan
+
+# COMMAND ----------
+
 import functools
 import os
 import sys
 import time
 from pathlib import Path
 
+# COMMAND ----------
+
+import functools
+import os
+import sys
+import time
+from pathlib import Path
 import matplotlib.pyplot as plt
-import nltk
-import pandas as pd
-
-# Ensure VADER lexicon is downloaded
-try:
-    nltk.data.find("sentiment/vader_lexicon.zip")
-except LookupError:
-    nltk.download("vader_lexicon")
-
 import numpy as np
+import pandas as pd
 import pyspark.sql.functions as F
+import seaborn as sns
 from hdbscan import HDBSCAN
 from pyspark.ml import Pipeline
 from pyspark.ml.evaluation import RegressionEvaluator
@@ -30,119 +39,139 @@ from pyspark.ml.feature import (
 from pyspark.ml.regression import GBTRegressor, LinearRegression, RandomForestRegressor
 from pyspark.sql import SparkSession
 from pyspark.sql.types import DoubleType, IntegerType, StringType
+from scipy import stats
 from sklearn.neighbors import KNeighborsClassifier
 
-# %% [markdown]
-# ## Imports & Configuration
+# COMMAND ----------
 
-# %% [markdown]
-# # Setup
+storage_account = "lab94290"
+container = "airbnb"
 
-# %%
-# Configuration
-# Detect environment: Databricks or Local
-IS_DATABRICKS = False
-try:
-    # Check if running in Databricks
-    # dbutils is only available in Databricks notebooks
-    dbutils.fs.ls("/")  # type: ignore  # noqa: F821
-    IS_DATABRICKS = True
-    print("Detected Databricks environment")
-except:
-    IS_DATABRICKS = False
-    print("Detected local environment")
+# COMMAND ----------
 
-if IS_DATABRICKS:
-    # === DATABRICKS CONFIGURATION ===
-    # UPDATE THESE PATHS for your Databricks workspace
-    DATA_PATH = "/dbfs/FileStore/YOUR_PATH_HERE/airbnb.csv"  # ← CHANGE THIS!
-    OUTPUT_DIR = "/dbfs/FileStore/models/production"
-    SAMPLE_FRACTION = 1.0  # Use full dataset
-
-    # Use existing Databricks Spark session
-    spark = SparkSession.getActiveSession()
-    if spark is None:
-        raise RuntimeError(
-            "No active Spark session found. Run this in Databricks notebook."
-        )
-
-    print(f"Data path: {DATA_PATH}")
-    print(f"Output directory: {OUTPUT_DIR}")
-    print(f"Using existing Databricks Spark session")
-
-else:
-    # === LOCAL CONFIGURATION ===
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-    DATA_PATH = PROJECT_ROOT / "data" / "raw" / "airbnb.csv"
-    OUTPUT_DIR = PROJECT_ROOT / "models" / "production"
-    SAMPLE_FRACTION = 1.0  # Full dataset
-
-    print(f"Creating local Spark session...")
-    print(f"Project root: {PROJECT_ROOT}")
-    print(f"Data path: {DATA_PATH}")
-    print(f"Output directory: {OUTPUT_DIR}")
-
-    # Create local SparkSession
-    spark = (
-        SparkSession.builder.appName("Airbnb Price Prediction - Local")
-        .master("local[*]")  # Use all available CPU cores
-        .config("spark.driver.memory", "8g")
-        .config("spark.executor.memory", "8g")
-        .config("spark.sql.shuffle.partitions", "200")
-        .config("spark.sql.adaptive.enabled", "true")
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
-        .config("spark.sql.adaptive.skewJoin.enabled", "true")
-        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-        .config("spark.kryoserializer.buffer.max", "512m")
-        .config("spark.sql.autoBroadcastJoinThreshold", "10m")
-        .config("spark.sql.execution.arrow.pyspark.enabled", "true")
-        .config("spark.sql.repl.eagerEval.enabled", "true")
-        .getOrCreate()
-    )
-
-# Set log level
-spark.sparkContext.setLogLevel("ERROR")
-
-# Read CSV and sample
-print(f"Reading data from: {DATA_PATH}")
-print(f"Sampling {SAMPLE_FRACTION * 100:.0f}% of data...")
-
-# %%
-airbnb = (
-    spark.read.option("header", "true")
-    .option("inferSchema", "true")
-    .option("escape", '"')
-    .option("multiLine", "true")
-    .csv(str(DATA_PATH))
-    .sample(withReplacement=False, fraction=SAMPLE_FRACTION, seed=42)
+sas_token = "sp=rle&st=2025-12-24T17:37:04Z&se=2026-02-28T01:52:04Z&spr=https&sv=2024-11-04&sr=c&sig=a0lx%2BS6PuS%2FvJ9Tbt4NKdCJHLE9d1Y1D6vpE1WKFQtk%3D"
+sas_token = sas_token.lstrip("?")
+spark.conf.set(
+    f"fs.azure.account.auth.type.{storage_account}.dfs.core.windows.net", "SAS"
+)
+spark.conf.set(
+    f"fs.azure.sas.token.provider.type.{storage_account}.dfs.core.windows.net",
+    "org.apache.hadoop.fs.azurebfs.sas.FixedSASTokenProvider",
+)
+spark.conf.set(
+    f"fs.azure.sas.fixed.token.{storage_account}.dfs.core.windows.net", sas_token
 )
 
-row_count = airbnb.count()
-print(f"✓ Loaded {row_count:,} rows ({SAMPLE_FRACTION * 100:.0f}% sample)")
-print(f"✓ Schema: {len(airbnb.columns)} columns")
+# COMMAND ----------
 
-# %% [markdown]
-# ## Utilities
+path = f"abfss://{container}@{storage_account}.dfs.core.windows.net/airbnb_1_12_parquet"
+print(path)
+airbnb = spark.read.parquet(path)
+calendar = spark.read.parquet("/airbnb_calendar")
 
+# COMMAND ----------
 
-# %%
-def time_execution(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        print(f"{func.__name__} took {end_time - start_time:.4f} seconds")
-        return result
+# spark settings
+spark.sparkContext.setLogLevel("ERROR")
+spark.conf.set("spark.sql.repl.eagerEval.enabled", True)
 
-    return wrapper
+# COMMAND ----------
 
+# DBTITLE 1,Untitled
+# Create a temporary directory that will be auto-cleaned
+OUTPUT_DIR = "/dbfs/FileStore/models/production"
+dbutils.fs.mkdirs(OUTPUT_DIR)
 
-# %% [markdown]
-# ## Data Ingestion & Schema
+# COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Calendar Processing
 
-# %%
+# COMMAND ----------
+
+from datetime import date
+from functools import reduce
+
+# COMMAND ----------
+
+import numpy as np
+import pandas as pd
+import pyspark.sql.functions as F
+from pyspark.ml.feature import QuantileDiscretizer
+from pyspark.sql import DataFrame, SparkSession, Window
+from pyspark.sql.functions import (
+    avg,
+    col,
+    count,
+    lit,
+    log1p,
+    regexp_replace,
+    to_date,
+    when,
+)
+from pyspark.sql.types import FloatType, StringType, StructField, StructType
+
+# COMMAND ----------
+
+def create_calendar(calendar: DataFrame):
+    window = Window.partitionBy("city")
+    calendar = (
+        calendar.select("adjusted_price", "city", "date")
+        .withColumn(
+            "price_adjusted_clean",
+            F.regexp_replace(F.col("adjusted_price"), "[$,]", "").cast("double"),
+        )
+        .filter(F.col("price_adjusted_clean").isNotNull())
+        .withColumn("price", F.log1p(F.col("price_adjusted_clean")))
+        .withColumn("date", F.to_date(F.col("date"), "yyyy-MM-dd"))
+        .withColumn("city", F.lower(F.regexp_replace(F.col("city"), "_", " ")))
+        .withColumn("day_month", F.date_format(F.col("date"), "MM-dd"))
+        .groupBy("city", "day_month")
+        .agg(F.avg("price").alias("price"), F.count(F.lit(1)).alias("count"))
+        .orderBy("city", "day_month")
+        .filter(F.col("count") > 10)
+        .withColumn(
+            "base_price",
+            F.avg(F.when(F.col("day_month") == "09-25", F.col("price"))).over(window),
+        )
+        .withColumn("price_relative", F.col("price") - F.col("base_price"))
+        .withColumn(
+            "price_normalized",
+            (F.col("price") - F.avg("price").over(window))
+            / F.stddev("price").over(window),
+        )
+        .withColumn("num_days", F.count(F.lit(1)).over(window))
+        .filter(F.col("num_days") >= 365)
+        .drop("base_price", "num_days", "count", "price")
+        .withColumnRenamed("day_month", "date")
+    )
+
+    # QuantileDiscretizer for stoplight
+    discretizer = QuantileDiscretizer(
+        numBuckets=4,
+        inputCol="price_normalized",
+        outputCol="stoplight_bucket",
+        handleInvalid="skip",
+    )
+    calendar = discretizer.fit(calendar).transform(calendar)
+
+    calendar = calendar.withColumn(
+        "stoplight",
+        F.when(F.col("stoplight_bucket") == 0, F.lit("green"))
+        .when(F.col("stoplight_bucket") == 1, F.lit("yellow"))
+        .when(F.col("stoplight_bucket") == 2, F.lit("orange"))
+        .when(F.col("stoplight_bucket") == 3, F.lit("red"))
+        .otherwise(F.lit(None)),
+    ).drop("stoplight_bucket", "price_normalized")
+    return calendar
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Data Ingestion & Schema
+
+# COMMAND ----------
+
 def initial_selection(df):
     # Define columns to keep. For most, the name remains the same.
     # For a few, a rename (alias) is explicitly handled to match subsequent transformations.
@@ -209,8 +238,8 @@ def initial_selection(df):
 
     return df.select(*select_exprs)
 
+# COMMAND ----------
 
-# %%
 # Set Schema
 def set_schema(df):
     from pyspark.sql.types import (
@@ -284,19 +313,24 @@ def set_schema(df):
 
     return df
 
+# COMMAND ----------
 
-# %% [markdown]
-# ## Core Transformations
+# MAGIC %md
+# MAGIC ## Core Transformations
 
+# COMMAND ----------
 
-# %%
+# COMMAND ----------
+def transform_name(df):
+    df_temp = df.withColumn(
+        "is_studio_binary",
+        F.when(F.lower(F.col("name")).contains("studio"), 1).otherwise(0),
+    )
+    return df_temp
+
+# COMMAND ----------
+
 def transform_details(df):
-    # 1. Regex Patterns
-    # (?i)    : Case-insensitive
-    # \b      : Word boundary
-    # (?<!shared\s) : Negative Lookbehind - "Do not match if 'shared' comes before this"
-    # (s|rooms?) : Matches 'bath', 'baths', 'bathroom', or 'bathrooms'
-
     re_beds = r"(?i)\b(\d+\.?\d*)\s+beds?\b"
     re_bedrooms = r"(?i)\b(\d+\.?\d*)\s+bedrooms?\b"
 
@@ -326,34 +360,16 @@ def transform_details(df):
 
     return df.drop("details_str")
 
+# COMMAND ----------
 
-@time_execution
-def add_description_length(df):
-    return df.withColumn(
-        "description_length_logp1",
-        F.log1p(F.coalesce(F.length(F.col("description")), F.lit(0))),
+def filter_top_k_cities(df, k=100):
+    city_counts = (
+        df.groupBy("city").count().orderBy(F.desc("count")).limit(k).select("city")
     )
+    top_cities = [row["city"] for row in city_counts.collect()]
+    return df.filter(F.col("city").isin(top_cities))
 
-
-@time_execution
-def add_loc_details_length(df):
-    return df.withColumn(
-        "loc_details_length_logp1",
-        F.log1p(
-            F.coalesce(
-                F.when(F.col("location_details") == "[]", F.lit(0)).otherwise(
-                    F.length(F.col("location_details"))
-                ),
-                F.lit(0),
-            )
-        ),
-    )
-
-
-# %%
-# TODO: improve price extraction robustness. fill na from pricing_details and make sure price per night isn't applied to price
-import pyspark.sql.functions as F
-
+# COMMAND ----------
 
 def prepare_price(df):
     """
@@ -376,7 +392,6 @@ def prepare_price(df):
     )
 
     # Create log-transformed column (will be null where price is null/invalid)
-    # DO NOT FILTER HERE - keep all rows including nulls
     df = df.withColumn(
         "price_cleaned",
         F.when(F.col("price") > 0, F.log1p(F.col("price"))).otherwise(None),
@@ -384,11 +399,12 @@ def prepare_price(df):
 
     return df
 
+# COMMAND ----------
 
 def filter_valid_prices(df):
     """
     Filters out rows with null or invalid prices.
-    Should be called AFTER clustering is complete to preserve geographic density.
+    Should be called after clustering is complete to preserve geographic density.
     """
     return df.filter(
         (F.col("price").isNotNull())
@@ -396,52 +412,15 @@ def filter_valid_prices(df):
         & (F.col("price_cleaned").isNotNull())
     )
 
+# COMMAND ----------
 
-@time_execution
 def transform_location(df):
     # City is the first term before the first comma
     df = df.withColumn("city", F.split(F.col("location"), ",").getItem(0))
     return df
 
+# COMMAND ----------
 
-# %%
-def top_k_cities(df, k=30):
-    # Optimized: Use broadcast join instead of collect to avoid driver bottleneck
-    city_counts = (
-        df.groupBy("city").count().orderBy(F.desc("count")).limit(k).select("city")
-    )
-    # Broadcast the small city list for efficient filtering without collecting to driver
-    return df.join(F.broadcast(city_counts), on="city", how="inner")
-
-
-# %%
-# Category Rating Transformation
-def transform_category_rating(df):
-    # Convert array of structs to a map for easy lookup
-    keys = F.col("category_rating.name")
-    values = F.col("category_rating.value")
-
-    df = df.withColumn("ratings_map", F.map_from_arrays(keys, values))
-
-    categories = [
-        "Cleanliness",
-        "Accuracy",
-        "Check-in",
-        "Communication",
-        "Location",
-        "Value",
-    ]
-
-    for category in categories:
-        col_name = f"rating_{category.lower().replace('-', '_')}"
-        df = df.withColumn(
-            col_name, F.col("ratings_map").getItem(category).cast("float")
-        )
-
-    return df.drop("ratings_map")
-
-
-# %%
 # Superhost Transformation
 def transform_superhost(df):
     # 't'/'f' or 'true'/'false' to 0 and 1
@@ -451,8 +430,8 @@ def transform_superhost(df):
     )
     return df
 
+# COMMAND ----------
 
-# %%
 # Interaction Features
 def create_interaction_features(df):
     """
@@ -513,6 +492,7 @@ def create_interaction_features(df):
         ).alias("rooms_per_guest"),
     )
 
+# COMMAND ----------
 
 def transform_amenities(df):
     from pyspark.sql.types import ArrayType, StringType, StructField, StructType
@@ -564,12 +544,13 @@ def transform_amenities(df):
 
     return df.drop("amenities", "amenities_parsed")
 
+# COMMAND ----------
 
-# %% [markdown]
-# ## City-Level Transformations
+# MAGIC %md
+# MAGIC ## City-Level Transformations
 
+# COMMAND ----------
 
-# %%
 def fit_transform_city(train_df, val_df):
     # Compute median price per city in train_df
     city_medians = train_df.groupBy("city").agg(
@@ -594,6 +575,7 @@ def fit_transform_city(train_df, val_df):
     city_centers_dict = {
         row["city"]: {"lat": float(row["center_lat"]), "lon": float(row["center_lon"])}
         for row in city_centers.collect()
+        if row["center_lat"] is not None and row["center_lon"] is not None
     }
 
     # Add median_city column to train_df
@@ -614,141 +596,13 @@ def fit_transform_city(train_df, val_df):
 
     return train_df, val_df
 
+# COMMAND ----------
 
-# %% [markdown]
-# ## Advanced Geospatial Features
+# MAGIC %md
+# MAGIC ## Advanced Geospatial Features
 
-# %%
-from pyspark.sql import functions as F
-from pyspark.sql.types import DoubleType, LongType, StringType
-from sklearn.neighbors import KNeighborsClassifier
+# COMMAND ----------
 
-
-def transform_neighborhoods(train_df, val_df):
-    # Broadcast small config/constants if needed
-    mcs = 10  # Minimum Cluster Size
-
-    # Prepare schemas with only necessary columns to minimize data shuffle
-    required_cols = ["city", "lat", "long", "price_cleaned"]
-    train_cols = [c for c in required_cols if c in train_df.columns]
-    val_cols = [c for c in required_cols if c in val_df.columns]
-
-    # Optimized: Select only required columns before pandas UDF to reduce data transfer
-    train_df = train_df.select(*train_cols)
-    val_df = val_df.select(*val_cols)
-
-    # Add index columns for efficient row alignment after pandas ops
-    train_df = train_df.withColumn("__idx", F.monotonically_increasing_id())
-    val_df = val_df.withColumn("__idx", F.monotonically_increasing_id())
-
-    # Optimized: Define schema directly instead of creating placeholder DataFrames
-    from pyspark.sql.types import StructField, StructType
-
-    base_schema = StructType(
-        [
-            StructField("city", StringType(), True),
-            StructField("lat", DoubleType(), True),
-            StructField("long", DoubleType(), True),
-            StructField("price_cleaned", DoubleType(), True),
-            StructField("__idx", LongType(), True),
-        ]
-    )
-
-    output_schema = StructType(
-        base_schema.fields
-        + [
-            StructField("cluster_id", LongType(), True),
-            StructField("cluster_median", DoubleType(), True),
-            StructField("source", StringType(), True),
-        ]
-    )
-
-    def cluster_and_stats_cogroup(key, train_pdf, val_pdf):
-        # Use only necessary columns for computation
-        train_part = train_pdf.copy()
-        val_part = val_pdf.copy()
-        train_part["source"] = "train"
-        val_part["source"] = "val"
-        train_part["cluster_id"] = -1
-        train_part["cluster_median"] = np.nan
-        val_part["cluster_id"] = -1
-        val_part["cluster_median"] = np.nan
-
-        # Optimized: Early exit for small training sets
-        if len(train_part) == 0:
-            return pd.concat([train_part, val_part], ignore_index=True)
-
-        # Filter for valid coordinates
-        train_valid = train_part.dropna(subset=["lat", "long"])
-        if len(train_valid) < mcs:
-            if not train_part.empty:
-                fallback_median = train_part["price_cleaned"].median()
-                train_part["cluster_median"] = fallback_median
-                val_part["cluster_median"] = fallback_median
-            return pd.concat([train_part, val_part], ignore_index=True)
-
-        # HDBSCAN clustering
-        train_coords = np.radians(train_valid[["lat", "long"]].values)
-        clusterer = HDBSCAN(
-            min_cluster_size=mcs, metric="haversine", cluster_selection_epsilon=0.000001
-        )
-        labels = clusterer.fit_predict(train_coords)
-        train_part.loc[train_valid.index, "cluster_id"] = labels
-
-        # Median price per cluster
-        valid_clusters = train_part[train_part["cluster_id"] != -1]
-        medians_map = (
-            valid_clusters.groupby("cluster_id")["price_cleaned"].median().to_dict()
-            if not valid_clusters.empty
-            else {}
-        )
-        train_part["cluster_median"] = train_part["cluster_id"].map(medians_map)
-
-        # Optimized: Pre-filter validation cities to match training cities
-        if not val_part.empty:
-            train_no_noise = train_part[
-                (train_part["cluster_id"] != -1) & train_part["lat"].notna()
-            ]
-            val_valid_mask = val_part["lat"].notna() & val_part["long"].notna()
-            val_valid = val_part[val_valid_mask]
-            if (
-                not train_no_noise.empty
-                and not val_valid.empty
-                and len(train_no_noise) >= 10
-            ):
-                knn = KNeighborsClassifier(n_neighbors=10, metric="haversine")
-                knn.fit(
-                    np.radians(train_no_noise[["lat", "long"]].values),
-                    train_no_noise["cluster_id"].astype(int),
-                )
-                preds = knn.predict(np.radians(val_valid[["lat", "long"]].values))
-                val_part.loc[val_valid_mask, "cluster_id"] = preds
-            val_part["cluster_median"] = val_part["cluster_id"].map(medians_map)
-        return pd.concat([train_part, val_part], ignore_index=True)
-
-    # Optimized: Remove redundant repartition - cogroup handles partitioning
-    # Pre-partition by city to enable efficient cogroup
-    train_df = train_df.repartition("city")
-    val_df = val_df.repartition("city")
-
-    combined_results = (
-        train_df.groupby("city")
-        .cogroup(val_df.groupby("city"))
-        .applyInPandas(cluster_and_stats_cogroup, schema=output_schema)
-    )
-
-    # Split and cleanup
-    final_train = combined_results.filter(F.col("source") == "train").drop("source")
-    final_val = combined_results.filter(F.col("source") == "val").drop("source")
-
-    # Remove index columns
-    final_train = final_train.drop("__idx")
-    final_val = final_val.drop("__idx")
-
-    return final_train, final_val
-
-
-# %%
 def transform_neighborhoods_pre_filter(train_df, val_df):
     """
     Performs HDBSCAN clustering based on geographic coordinates BEFORE price filtering.
@@ -840,7 +694,9 @@ def transform_neighborhoods_pre_filter(train_df, val_df):
         # ========== HDBSCAN CLUSTERING ==========
         coords_radians = np.radians(valid_coords[["lat", "long"]].values)
         clusterer = HDBSCAN(
-            min_cluster_size=mcs, metric="haversine", cluster_selection_epsilon=0.000001
+            min_cluster_size=mcs,
+            metric="haversine",
+            cluster_selection_epsilon=0.0000005,
         )
         labels = clusterer.fit_predict(coords_radians)
         city_pdf.loc[valid_coords.index, "cluster_id"] = labels
@@ -916,8 +772,8 @@ def transform_neighborhoods_pre_filter(train_df, val_df):
 
     return train_clustered, val_clustered
 
+# COMMAND ----------
 
-# %%
 def compute_cluster_medians(train_df, val_df):
     """
     Computes median price per cluster using filtered training data.
@@ -926,9 +782,14 @@ def compute_cluster_medians(train_df, val_df):
     Should be called AFTER price filtering (filter_valid_prices) to ensure
     cluster medians are calculated from valid price data only.
 
+    Fallback hierarchy for cluster_median:
+    1. Cluster-specific median (from HDBSCAN clustering)
+    2. City-wide median (median_city column)
+    3. Global median (dataset-wide median)
+
     Args:
-        train_df: Training DataFrame with cluster_id and price_cleaned columns
-        val_df: Validation DataFrame with cluster_id column
+        train_df: Training DataFrame with cluster_id, price_cleaned, and median_city columns
+        val_df: Validation DataFrame with cluster_id and median_city columns
 
     Returns:
         Tuple of (train_df, val_df) with cluster_median column added
@@ -941,38 +802,42 @@ def compute_cluster_medians(train_df, val_df):
         .agg(F.percentile_approx("price_cleaned", 0.5).alias("cluster_median"))
     )
 
-    # Compute global median as fallback for unseen clusters or noise
+    # Compute global median as final fallback for unseen clusters or noise
     global_median = train_df.agg(F.percentile_approx("price_cleaned", 0.5)).first()[0]
 
     # Join to training data
     train_df = train_df.join(cluster_medians, on=["city", "cluster_id"], how="left")
 
-    # Fill nulls (noise points or small clusters) with global median
+    # Fill nulls (noise points or small clusters) with city_median, then global median
+    # Fallback hierarchy: cluster_median -> city_median -> global_median
     train_df = train_df.withColumn(
         "cluster_median",
-        F.when(F.col("cluster_median").isNull(), F.lit(global_median)).otherwise(
-            F.col("cluster_median")
-        ),
+        F.when(
+            F.col("cluster_median").isNull(),
+            F.coalesce(F.col("median_city"), F.lit(global_median)),
+        ).otherwise(F.col("cluster_median")),
     )
 
-    # Join to validation data with fallback to global median
+    # Join to validation data with same fallback hierarchy
     val_df = val_df.join(
         cluster_medians, on=["city", "cluster_id"], how="left"
     ).withColumn(
         "cluster_median",
-        F.when(F.col("cluster_median").isNull(), F.lit(global_median)).otherwise(
-            F.col("cluster_median")
-        ),
+        F.when(
+            F.col("cluster_median").isNull(),
+            F.coalesce(F.col("median_city"), F.lit(global_median)),
+        ).otherwise(F.col("cluster_median")),
     )
 
     return train_df, val_df
 
+# COMMAND ----------
 
-# %% [markdown]
-# ## ML Pipeline
+# MAGIC %md
+# MAGIC ## ML Pipeline
 
+# COMMAND ----------
 
-# %%
 # Prepare Feature Vector
 def fit_transform_features(train_df, val_df, features=None):
     if features is None:
@@ -982,25 +847,30 @@ def fit_transform_features(train_df, val_df, features=None):
     continuous_features = list(
         set(
             [
+                # Raw property features
                 "ratings",
-                "lat",
-                "long",
                 "guests",
+                "property_number_of_reviews",
+                "num_beds",
+                "num_bedrooms",
+                "num_baths",
+                # Raw host features
                 "host_number_of_reviews",
                 "host_rating",
                 "host_year",
-                "property_number_of_reviews",
-                "num_bedrooms",
-                "num_baths",
-                "median_city",
+                # Geospatial features
                 "cluster_median",
                 # Interaction features
+                "beds_per_guest",
+                "bedrooms_per_guest",
+                "guest_capacity_ratio",
+                "superhost_rating_interaction",
                 "review_volume_quality",
                 "total_rooms",
+                "bed_to_bedroom_ratio",
                 "rooms_per_guest",
+                # Text features
                 "amenities_count",
-                "description_length_logp1",
-                "loc_details_length_logp1",
             ]
         )
         & set(features)
@@ -1010,12 +880,7 @@ def fit_transform_features(train_df, val_df, features=None):
     # We dynamically include 'type_' columns created by transform_name
     binary_type_cols = [c for c in features if c.startswith("type_")]
     binary_features = list(
-        set(
-            [
-                "is_superhost_binary",
-            ]
-            + binary_type_cols
-        )
+        set(["is_superhost_binary", "is_studio_binary"] + binary_type_cols)
         & set(features)
     )
 
@@ -1111,8 +976,13 @@ def fit_transform_features(train_df, val_df, features=None):
         binary_features,  # Feature names
     )
 
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ## Model Training
+
+# COMMAND ----------
+
 def train_models(train_data, val_data):
     # ... (Keep your existing Model Dictionary and setup) ...
     models = {
@@ -1120,7 +990,7 @@ def train_models(train_data, val_data):
             featuresCol="features",
             labelCol="price_cleaned",
             maxIter=40,
-            maxDepth=9,
+            maxDepth=7,
             stepSize=0.05,
         )
     }
@@ -1230,16 +1100,528 @@ def train_models(train_data, val_data):
     # Return results and the trained model
     return results, model
 
+# COMMAND ----------
 
-# %%
-import matplotlib.pyplot as plt
-import numpy as np
-import seaborn as sns
-from hdbscan import HDBSCAN
+FEATURE_CATEGORIES = {
+    # Raw Property Features
+    "guests": "Raw Property",
+    "num_beds": "Raw Property",
+    "num_bedrooms": "Raw Property",
+    "num_baths": "Raw Property",
+    "ratings": "Raw Property",
+    "property_number_of_reviews": "Raw Property",
+    # Raw Host Features
+    "host_rating": "Raw Host",
+    "host_year": "Raw Host",
+    "host_number_of_reviews": "Raw Host",
+    # Geospatial Features
+    "cluster_median": "Geospatial",
+    # Engineered Features
+    "beds_per_guest": "Engineered",
+    "bedrooms_per_guest": "Engineered",
+    "guest_capacity_ratio": "Engineered",
+    "superhost_rating_interaction": "Engineered",
+    "review_volume_quality": "Engineered",
+    "total_rooms": "Engineered",
+    "bed_to_bedroom_ratio": "Engineered",
+    "rooms_per_guest": "Engineered",
+    # Text Features
+    "amenities_count": "Text Features",
+    # Binary Features
+    "is_superhost_binary": "Binary",
+    "is_studio_binary": "Binary",
+}
 
-# %% [markdown]
-# ## Visualization
+# COMMAND ----------
 
+CATEGORY_COLORS = {
+    "Raw Property": "#2ecc71",  # Green
+    "Raw Host": "#e67e22",  # Orange
+    "Geospatial": "#3498db",  # Blue
+    "Engineered": "#e74c3c",  # Red
+    "Text Features": "#9b59b6",  # Purple
+    "Binary": "#95a5a6",  # Gray
+    "Other": "#34495e",  # Dark gray
+}
+
+# COMMAND ----------
+
+def categorize_feature(feature_name):
+    """
+    Map a feature name to its category.
+    Handles '_imputed' suffix and 'type_*' binary columns.
+    """
+    clean_name = feature_name.replace("_imputed", "")
+
+    # Check if it's a type column (binary)
+    if clean_name.startswith("type_"):
+        return "Binary"
+
+    # Look up in category dictionary
+    return FEATURE_CATEGORIES.get(clean_name, "Other")
+
+# COMMAND ----------
+
+def plot_feature_importance(
+    gbt_model,
+    continuous_features,
+    binary_features,
+    output_file="feature_importance.png",
+):
+    """
+    Extract feature importances from trained GBT model and create a horizontal bar chart.
+    Features are color-coded by category.
+    """
+    # Extract feature importances vector
+    importances = gbt_model.featureImportances
+
+    # Build feature name list (must match order: continuous first, then binary)
+    feature_names = [f"{f}_imputed" for f in continuous_features] + [
+        f"{f}_imputed" for f in binary_features
+    ]
+
+    # Create DataFrame
+    importance_df = pd.DataFrame(
+        {
+            "feature": feature_names,
+            "importance": [importances[i] for i in range(len(feature_names))],
+        }
+    )
+
+    # Add category and color
+    importance_df["category"] = importance_df["feature"].apply(categorize_feature)
+    importance_df["color"] = importance_df["category"].map(CATEGORY_COLORS)
+
+    # Sort by importance
+    importance_df = importance_df.sort_values("importance", ascending=True)
+
+    # Plot
+    plt.figure(figsize=(12, max(8, len(feature_names) * 0.3)))
+    bars = plt.barh(
+        range(len(importance_df)),
+        importance_df["importance"],
+        color=importance_df["color"],
+        alpha=0.8,
+    )
+
+    plt.yticks(
+        range(len(importance_df)),
+        [f.replace("_imputed", "") for f in importance_df["feature"]],
+    )
+    plt.xlabel("Importance Score", fontsize=12)
+    plt.title("Feature Importance (GBT Model)", fontsize=14, fontweight="bold")
+    plt.grid(axis="x", linestyle="--", alpha=0.3)
+
+    # Add legend
+    from matplotlib.patches import Patch
+
+    legend_elements = [
+        Patch(facecolor=CATEGORY_COLORS[cat], label=cat, alpha=0.8)
+        for cat in importance_df["category"].unique()
+    ]
+    plt.legend(handles=legend_elements, loc="lower right", fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    return importance_df
+
+# COMMAND ----------
+
+def plot_feature_correlations(
+    train_df,
+    continuous_features,
+    output_file="feature_correlation.png",
+    sample_size=10000,
+):
+    """
+    Compute Pearson correlation for continuous features and plot heatmap.
+    """
+    # Sample data efficiently
+    total_count = train_df.count()
+    fraction = min(1.0, sample_size / total_count)
+
+    # Select only continuous features (check which columns exist in the DataFrame)
+    available_features = []
+    df_columns = set(train_df.columns)
+
+    # Try with _imputed suffix first, if not available try without
+    for f in continuous_features:
+        if f"{f}_imputed" in df_columns:
+            available_features.append(f"{f}_imputed")
+        elif f in df_columns:
+            available_features.append(f)
+
+    if not available_features:
+        print(
+            "  ⚠ Warning: No continuous features found in DataFrame, skipping correlation"
+        )
+        return
+
+    sampled_df = (
+        train_df.select(available_features)
+        .sample(withReplacement=False, fraction=fraction, seed=42)
+        .toPandas()
+    )
+
+    # Compute correlation matrix
+    corr_matrix = sampled_df.corr()
+
+    # Clean feature names for display
+    corr_matrix.index = [f.replace("_imputed", "") for f in corr_matrix.index]
+    corr_matrix.columns = [f.replace("_imputed", "") for f in corr_matrix.columns]
+
+    # Plot heatmap
+    plt.figure(figsize=(14, 12))
+    mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)  # Mask upper triangle
+
+    sns.heatmap(
+        corr_matrix,
+        mask=mask,
+        cmap="RdBu_r",
+        center=0,
+        vmin=-1,
+        vmax=1,
+        annot=False,
+        fmt=".2f",
+        square=True,
+        linewidths=0.5,
+        cbar_kws={"shrink": 0.8},
+    )
+
+    # Annotate only strong correlations
+    for i in range(len(corr_matrix)):
+        for j in range(i):
+            if abs(corr_matrix.iloc[i, j]) > 0.5:
+                plt.text(
+                    j + 0.5,
+                    i + 0.5,
+                    f"{corr_matrix.iloc[i, j]:.2f}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    fontweight="bold",
+                )
+
+    plt.title(
+        f"Feature Correlation Heatmap (n={len(sampled_df):,})",
+        fontsize=14,
+        fontweight="bold",
+        pad=20,
+    )
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=150, bbox_inches="tight")
+    plt.close()
+
+# COMMAND ----------
+
+def plot_feature_distributions(
+    train_df, importance_df, output_file="feature_distributions.png", sample_size=15000
+):
+    """
+    Plot distribution of top 9 features by importance.
+    Each subplot shows histogram + box plot + summary statistics.
+    """
+    # Get top 9 features
+    top_9_features = importance_df.nlargest(9, "importance")["feature"].tolist()
+
+    # Find which columns actually exist in the DataFrame
+    df_columns = set(train_df.columns)
+    available_features = []
+    for f in top_9_features:
+        # Try _imputed suffix first, then without
+        if f in df_columns:
+            available_features.append(f)
+        else:
+            # Try without _imputed suffix
+            f_clean = f.replace("_imputed", "")
+            if f_clean in df_columns:
+                available_features.append(f_clean)
+
+    if not available_features:
+        print("  ⚠ Warning: No features found in DataFrame for distributions, skipping")
+        return
+
+    # Take only top 9 available
+    top_9 = available_features[:9]
+
+    # Sample data
+    total_count = train_df.count()
+    fraction = min(1.0, sample_size / total_count)
+    sampled_df = (
+        train_df.select(top_9)
+        .sample(withReplacement=False, fraction=fraction, seed=42)
+        .toPandas()
+    )
+
+    # Create 3x3 subplot grid
+    fig, axes = plt.subplots(3, 3, figsize=(16, 12))
+    axes = axes.flatten()
+
+    for idx, feature in enumerate(top_9):
+        ax = axes[idx]
+        data = sampled_df[feature].dropna()
+
+        # Histogram
+        ax.hist(data, bins=30, alpha=0.7, color="steelblue", edgecolor="black")
+
+        # Add box plot overlay (at top)
+        ax2 = ax.twiny()
+        ax2.boxplot(
+            [data],
+            vert=False,
+            positions=[ax.get_ylim()[1] * 0.9],
+            widths=ax.get_ylim()[1] * 0.1,
+            patch_artist=True,
+            boxprops=dict(facecolor="orange", alpha=0.6),
+        )
+        ax2.set_xlim(ax.get_xlim())
+        ax2.set_xticks([])
+
+        # Statistics
+        mean_val = data.mean()
+        median_val = data.median()
+        std_val = data.std()
+        skew_val = stats.skew(data)
+
+        # Clean feature name
+        clean_name = feature.replace("_imputed", "")
+
+        ax.set_title(
+            f"{clean_name}\nμ={mean_val:.2f}, σ={std_val:.2f}, skew={skew_val:.2f}",
+            fontsize=10,
+            fontweight="bold",
+        )
+        ax.set_xlabel("Value", fontsize=9)
+        ax.set_ylabel("Frequency", fontsize=9)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    plt.suptitle(
+        f"Feature Distributions (Top 9 by Importance, n={len(sampled_df):,})",
+        fontsize=14,
+        fontweight="bold",
+        y=0.995,
+    )
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=150, bbox_inches="tight")
+    plt.close()
+
+# COMMAND ----------
+
+def plot_feature_impact(
+    val_df, importance_df, output_file="feature_impact.png", sample_size=5000
+):
+    """
+    Partial dependence plots for top 6 features.
+    Shows how changing feature values affects predicted price.
+    """
+    # Get top 6 features
+    top_6_features = importance_df.nlargest(6, "importance")["feature"].tolist()
+
+    # Find which columns actually exist in the DataFrame
+    df_columns = set(val_df.columns)
+    available_features = []
+    for f in top_6_features:
+        # Try with the feature name as-is first, then without _imputed suffix
+        if f in df_columns:
+            available_features.append(f)
+        else:
+            f_clean = f.replace("_imputed", "")
+            if f_clean in df_columns:
+                available_features.append(f_clean)
+
+    if not available_features:
+        print(
+            "  ⚠ Warning: No features found in DataFrame for impact analysis, skipping"
+        )
+        return
+
+    # Take only top 6 available
+    top_6 = available_features[:6]
+
+    # Sample validation predictions
+    total_count = val_df.count()
+    fraction = min(1.0, sample_size / total_count)
+    sampled_df = (
+        val_df.select(top_6 + ["prediction"])
+        .sample(withReplacement=False, fraction=fraction, seed=42)
+        .toPandas()
+    )
+
+    # Create 2x3 subplot grid
+    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+    axes = axes.flatten()
+
+    for idx, feature in enumerate(top_6):
+        ax = axes[idx]
+        data = sampled_df[[feature, "prediction"]].dropna()
+
+        # Bin feature values into 20 bins
+        data["feature_binned"] = pd.cut(data[feature], bins=20)
+
+        # Calculate mean prediction and std dev per bin
+        grouped = data.groupby("feature_binned")["prediction"].agg(
+            ["mean", "std", "count"]
+        )
+        grouped = grouped[grouped["count"] >= 5]  # Only bins with 5+ samples
+
+        # Get bin centers for x-axis
+        bin_centers = [interval.mid for interval in grouped.index]
+
+        # Plot mean prediction
+        ax.plot(bin_centers, grouped["mean"], color="darkblue", linewidth=2, marker="o")
+
+        # Add confidence bands (±1 std dev)
+        ax.fill_between(
+            bin_centers,
+            grouped["mean"] - grouped["std"],
+            grouped["mean"] + grouped["std"],
+            alpha=0.3,
+            color="lightblue",
+            label="±1 σ",
+        )
+
+        # Clean feature name
+        clean_name = feature.replace("_imputed", "")
+
+        ax.set_title(f"Impact of {clean_name} on Price", fontsize=11, fontweight="bold")
+        ax.set_xlabel(clean_name, fontsize=10)
+        ax.set_ylabel("Predicted Log(Price)", fontsize=10)
+        ax.grid(linestyle="--", alpha=0.4)
+        ax.legend(loc="best", fontsize=8)
+
+    plt.suptitle(
+        f"Feature Impact on Price Prediction (n={len(sampled_df):,})",
+        fontsize=14,
+        fontweight="bold",
+        y=0.995,
+    )
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=150, bbox_inches="tight")
+    plt.close()
+
+# COMMAND ----------
+
+def plot_engineering_impact(
+    importance_df, output_file="feature_engineering_impact.png"
+):
+    """
+    Compare total importance by feature category.
+    Shows side-by-side: grouped bar chart + pie chart.
+    """
+    # Group by category and sum importances
+    category_importance = (
+        importance_df.groupby("category")["importance"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+
+    # Create side-by-side plots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Bar chart
+    colors = [CATEGORY_COLORS[cat] for cat in category_importance.index]
+    bars = ax1.bar(
+        range(len(category_importance)),
+        category_importance.values,
+        color=colors,
+        alpha=0.8,
+        edgecolor="black",
+    )
+    ax1.set_xticks(range(len(category_importance)))
+    ax1.set_xticklabels(category_importance.index, rotation=30, ha="right")
+    ax1.set_ylabel("Total Importance", fontsize=12)
+    ax1.set_title(
+        "Total Feature Importance by Category", fontsize=13, fontweight="bold"
+    )
+    ax1.grid(axis="y", linestyle="--", alpha=0.3)
+
+    # Add value labels on bars
+    for i, (bar, val) in enumerate(zip(bars, category_importance.values)):
+        ax1.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            f"{val:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    # Pie chart
+    wedges, texts, autotexts = ax2.pie(
+        category_importance.values,
+        labels=category_importance.index,
+        colors=colors,
+        autopct="%1.1f%%",
+        startangle=90,
+        textprops={"fontsize": 11},
+    )
+    for autotext in autotexts:
+        autotext.set_color("white")
+        autotext.set_fontweight("bold")
+    ax2.set_title("Feature Category Distribution", fontsize=13, fontweight="bold")
+
+    plt.suptitle(
+        "Feature Engineering ROI Analysis", fontsize=15, fontweight="bold", y=0.98
+    )
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=150, bbox_inches="tight")
+    plt.close()
+
+# COMMAND ----------
+
+def visualize_feature_selection(
+    train_df,
+    val_df,
+    gbt_model,
+    continuous_features,
+    binary_features,
+    output_dir="./artifacts/",
+):
+    """
+    Generate all 5 feature selection visualizations.
+    Call this after model training is complete.
+    """
+
+    importance_df = plot_feature_importance(
+        gbt_model,
+        continuous_features,
+        binary_features,
+        output_file=f"{output_dir}/feature_importance.png",
+    )
+    print("  ✓ Saved feature_importance.png")
+
+    plot_feature_correlations(
+        train_df,
+        continuous_features,
+        output_file=f"{output_dir}/feature_correlation.png",
+        sample_size=10000,
+    )
+    print("  ✓ Saved feature_correlation.png")
+
+    plot_feature_distributions(
+        train_df,
+        importance_df,
+        output_file=f"{output_dir}/feature_distributions.png",
+        sample_size=15000,
+    )
+    print("  ✓ Saved feature_distributions.png")
+
+    plot_feature_impact(
+        val_df,
+        importance_df,
+        output_file=f"{output_dir}/feature_impact.png",
+        sample_size=5000,
+    )
+    # [5/5] Engineering ROI
+    print("\n[5/5] Creating engineering ROI comparison...")
+    plot_engineering_impact(
+        importance_df, output_file=f"{output_dir}/feature_engineering_impact.png"
+    )
+
+# COMMAND ----------
 
 def visualize_city_clusters(spark_df, city_name="Greater London", sample_size=20000):
     """
@@ -1301,93 +1683,91 @@ def visualize_city_clusters(spark_df, city_name="Greater London", sample_size=20
     print(f"  ✓ Saved {filename}")
     plt.close()  # Close figure to free memory
 
+# COMMAND ----------
 
-# Usage:
-# visualize_city_clusters(train_df)
+# MAGIC %md
+# MAGIC ## Pipeline Execution
 
+# COMMAND ----------
 
-# %% [markdown]
-# ## Pipeline Execution
-
-
-# %%
 def apply_stateless_transformations(df):
     df = initial_selection(df)
     df = set_schema(df)
     df = prepare_price(df)  # CHANGED: Prepares price_cleaned but does NOT filter nulls
     df = transform_details(df)
-    df = add_description_length(df)
-    df = add_loc_details_length(df)
     df = transform_location(df)
-    df = top_k_cities(df, 30)
-    df = transform_category_rating(df)
+    df = filter_top_k_cities(df)
+    df = transform_name(df)
     df = transform_superhost(df)
     df = transform_amenities(df)
     df = create_interaction_features(df)
     return df
 
+# COMMAND ----------
 
-# %% [markdown]
-# # Running
+# MAGIC %md
+# MAGIC ## Running
 
-# %%
-# Apply stateless transformations (includes prepare_price, NOT filter)
+# COMMAND ----------
+
+calendar = create_calendar(calendar)
+top_cities = [row["city"] for row in calendar.select("city").distinct().collect()]
+
+# COMMAND ----------
+
+# Apply stateless transformations
 df = apply_stateless_transformations(airbnb)
+
+# COMMAND ----------
 
 # Cache before split
 df = df.cache()
-df.count()  # Trigger cache by materializing
+df.count()  # Trigger cache
+
+# COMMAND ----------
 
 # Split into train/val
 train_df, val_df = df.randomSplit([0.85, 0.15], seed=42)
 # Unpersist parent DataFrame since children are now cached
 df.unpersist()
 
-# CLUSTERING HAPPENS HERE - BEFORE filtering, with full geographic density
-# Includes IQR-based outlier removal for obviously misplaced coordinates
-print(
-    "Performing city clustering with full geographic density (before price filtering)..."
-)
+# COMMAND ----------
+
+# clustering
 train_df, val_df = transform_neighborhoods_pre_filter(train_df, val_df)
 train_df = train_df.cache()
 train_df.count()
 val_df = val_df.cache()
 val_df.count()
 
-# Generate cluster visualizations for major cities
-print("\n" + "=" * 70)
-print("GENERATING CLUSTER VISUALIZATIONS")
-print("=" * 70)
+# COMMAND ----------
 
 cities_to_visualize = ["Greater London", "Paris", "Austin"]
 for city in cities_to_visualize:
-    print(f"\nCreating visualization for {city}...")
     visualize_city_clusters(train_df, city_name=city, sample_size=20000)
 
-print("\n" + "=" * 70)
-print("CLUSTER VISUALIZATIONS COMPLETE")
-print("=" * 70 + "\n")
+# COMMAND ----------
 
-# NOW filter out null/invalid prices (after clustering is complete)
-print("Filtering out listings with null/invalid prices...")
 train_df = filter_valid_prices(train_df)
 val_df = filter_valid_prices(val_df)
 
-# Compute city medians (using filtered data with valid prices)
-print("Computing city-level median prices...")
+# COMMAND ----------
+
 train_df, val_df = fit_transform_city(train_df, val_df)
 
-# Compute cluster medians (using filtered data with valid prices)
-print("Computing cluster-level median prices...")
+# COMMAND ----------
+
 train_df, val_df = compute_cluster_medians(train_df, val_df)
 
-# Cache after all transformations complete
+# COMMAND ----------
+
 train_df = train_df.cache()
 train_df.count()
 val_df = val_df.cache()
 val_df.count()
 
-# %%
+# COMMAND ----------
+
 # Unpack fitted components from fit_transform_features
 (
     train_df,
@@ -1402,23 +1782,30 @@ val_df.count()
     bin_features,
 ) = fit_transform_features(train_df, val_df)
 
-# %%
-# train_df.write.mode("overwrite").parquet("./data/train")
-# val_df.write.mode("overwrite").parquet("./data/val")
+# COMMAND ----------
 
-# %%
-train_df.show(10)
-
-# %%
 results, gbt_model = train_models(train_df, val_df)
 
-# %%
-# === SAVE PIPELINE ARTIFACTS ===
-print("\n" + "=" * 70)
-print("SAVING MODEL PIPELINE")
-print("=" * 70)
+# COMMAND ----------
 
-from ml.training.save_model import save_pipeline_artifacts
+val_df_with_predictions = gbt_model.transform(val_df)
+
+# COMMAND ----------
+
+visualize_feature_selection(
+    train_df=train_df,
+    val_df=val_df_with_predictions,
+    gbt_model=gbt_model,
+    continuous_features=cont_features,
+    binary_features=bin_features,
+    output_dir="./visualizations",
+)
+
+# COMMAND ----------
+
+# MAGIC %run ./save_model
+
+# COMMAND ----------
 
 # Prepare performance metrics
 performance_metrics = {
@@ -1428,6 +1815,8 @@ performance_metrics = {
     "Train_R2": results[0]["Train_R2"],
     "Train_RMSE": results[0]["Train_RMSE"],
 }
+
+# COMMAND ----------
 
 # Save everything
 save_pipeline_artifacts(
@@ -1445,8 +1834,22 @@ save_pipeline_artifacts(
     continuous_features=cont_features,
     binary_features=bin_features,
     performance_metrics=performance_metrics,
-    output_dir=str(OUTPUT_DIR),
+    output_dir="./artifacts",
 )
 
-print("\n✓ All pipeline artifacts saved successfully!")
-print("You can now use these models for prediction in the Flask backend.")
+# COMMAND ----------
+
+calendar.write.mode("overwrite").parquet("./artifacts/calendar")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Downloading data
+# MAGIC
+# MAGIC - In order to download the model and artifacts to the local machine, we will use databricks-cli
+# MAGIC - The processed data weighs a total of 2.5MBs
+# MAGIC - install the CLI by following the instructions: https://docs.databricks.com/aws/en/dev-tools/cli/install
+# MAGIC - authenticate to gain access to the workspace
+# MAGIC - download the parquet files using `databricks fs cp dbfs:/artifacts . --recursive`
+# MAGIC - download the .json files in this workspace manually by clicking on 'artifacts' and 'download ZIP'
+# MAGIC - Alternatively, the latest model is available on the projects github page https://github.com/RazEly/airbnb-predictor which requires no further setup, simply follow the README

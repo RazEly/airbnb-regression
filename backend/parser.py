@@ -24,9 +24,27 @@ REVIEW_COUNT_REGEX = re.compile(r"(\d{1,4})\s+reviews?", re.IGNORECASE)
 HOST_SINCE_REGEX = re.compile(r"Hosting since\s+(\d{4})", re.IGNORECASE)
 RESPONSE_RATE_REGEX = re.compile(r"Response rate:\s*(\d+%)", re.IGNORECASE)
 NIGHTS_REGEX = re.compile(r"for\s+(\d+)\s+nights?", re.IGNORECASE)
+# === PRICE WITH NIGHTS PATTERN ===
+# Pattern: (currency)XXXX for X nights - e.g., "₪1,670 for 4 nights"
+# Updated to handle variations like "Show price breakdown for X nights"
+PRICE_FOR_NIGHTS_PATTERN = re.compile(
+    rf"{PRICE_SYMBOL_PATTERN}\s?([\d,.]+)(?:\s+|.*?\s+)for\s+(\d+)\s+nights?",
+    re.IGNORECASE,
+)
+# === FEE FILTERING KEYWORDS ===
+# Keywords to identify non-listing prices (parking, cleaning, etc.)
+FEE_KEYWORDS = [
+    "parking",
+    "valet",
+    "cleaning",
+    "service fee",
+    "service fees",
+    "deposit",
+    "pet fee",
+    "resort fee",
+    "amenity fee",
+]
 # === NEW PATTERNS ===
-YEARS_HOSTING_REGEX = re.compile(r"(\d+)\s+years?\s+hosting", re.IGNORECASE)
-MONTHS_HOSTING_REGEX = re.compile(r"(\d+)\s+months?\s+hosting", re.IGNORECASE)
 AMENITIES_COUNT_REGEX = re.compile(r"Show\s+all\s+(\d+)\s+amenities?", re.IGNORECASE)
 HOST_RATING_REGEX = re.compile(
     r"(\d+\.\d+)\s*out\s*of\s*5\s*average\s*rating", re.IGNORECASE
@@ -76,7 +94,6 @@ def create_empty_snapshot() -> Dict[str, Any]:
         "lat": None,
         "long": None,
         "guests": None,
-        "description_items": None,
         "pricing_details": {
             "airbnb_service_fee": None,
             "cleaning_fee": None,
@@ -87,7 +104,6 @@ def create_empty_snapshot() -> Dict[str, Any]:
             "special_offer": None,
             "taxes": None,
         },
-        "category_rating": [],
         "host_number_of_reviews": None,
         "host_rating": None,
         "host_response_rate": None,
@@ -105,7 +121,6 @@ def create_empty_snapshot() -> Dict[str, Any]:
         "num_beds": None,  # From overview: "1 bed"
         "num_baths": None,  # From overview: "1 bath" or "1.5 baths"
         "num_amenities": None,  # From "Show all 59 amenities"
-        "years_hosting": None,  # From "2 years hosting"
     }
 
 
@@ -169,6 +184,12 @@ def parse_listing_document(
         snapshot["check_in"] = check_in
         snapshot["check_out"] = check_out
 
+    # === Fallback: Extract dates from HTML if not in URL ===
+    if not snapshot["check_in"] or not snapshot["check_out"]:
+        check_in_html, check_out_html = extract_dates_from_url(html)
+        snapshot["check_in"] = snapshot["check_in"] or check_in_html
+        snapshot["check_out"] = snapshot["check_out"] or check_out_html
+
     # === NEW: Extract property overview (single source of truth) ===
     logger.debug("parse_listing_document: Extracting property overview...")
     property_overview = extract_property_overview(soup)
@@ -206,9 +227,6 @@ def parse_listing_document(
     apply_text_fallbacks(snapshot, page_text)
     logger.debug("parse_listing_document: Applying geo extraction...")
     apply_geo_from_html(snapshot, html)
-
-    if not snapshot.get("description_items") and snapshot.get("details"):
-        snapshot["description_items"] = " | ".join(snapshot["details"][:5])
 
     # === FINAL: Simplified superhost detection (overrides all previous) ===
     # Simple, reliable check: if "superhost" appears anywhere in page text
@@ -427,19 +445,13 @@ def apply_text_fallbacks(snapshot: Dict[str, Any], text: str) -> None:
     if not text:
         return
 
-    price_info = extract_price_info(text)
+    price_info = extract_price_info(text, snapshot)
     if price_info and not snapshot.get("price"):
         snapshot["price"] = price_info.amount
         snapshot["currency"] = snapshot.get("currency") or price_info.currency
 
-    if not snapshot["pricing_details"].get("num_of_nights"):
-        nights_match = NIGHTS_REGEX.search(text)
-        if nights_match:
-            snapshot["pricing_details"]["num_of_nights"] = parse_number(
-                nights_match.group(1)
-            )
-
     # === REMOVED: Capacity details now extracted in extract_property_overview() ===
+    # === REMOVED: num_of_nights now extracted in extract_price_info() ===
     # Old code: extract_capacity_details(text) - no longer needed
 
     rating_match = RATING_WITH_REVIEWS_REGEX.search(text)
@@ -485,38 +497,12 @@ def apply_text_fallbacks(snapshot: Dict[str, Any], text: str) -> None:
                 :5
             ]
 
-    if not snapshot.get("category_rating"):
-        category_ratings = extract_category_ratings(text)
-        if category_ratings:
-            snapshot["category_rating"] = category_ratings
-
     fee_details = extract_fee_details(text)
     for key, value in fee_details.items():
         if value is not None and snapshot["pricing_details"].get(key) is None:
             snapshot["pricing_details"][key] = value
 
     # === REMOVED: City extraction now done in extract_property_overview() ===
-
-    # === NEW: Extract years hosting from "2 years hosting" or "5 months hosting" ===
-    if not snapshot.get("years_hosting"):
-        years_match = YEARS_HOSTING_REGEX.search(text)
-        if years_match:
-            years_value = parse_number(years_match.group(1))
-            snapshot["years_hosting"] = years_value
-            logger.debug(
-                f"apply_text_fallbacks: YEARS_HOSTING matched - '{years_match.group(0)}' -> {years_value} years"
-            )
-        else:
-            # Try months if years not found
-            months_match = MONTHS_HOSTING_REGEX.search(text)
-            if months_match:
-                months = parse_number(months_match.group(1))
-                # Convert months to fractional years (e.g., 5 months = 0.42 years)
-                years_value = round(months / 12, 2) if months else None
-                snapshot["years_hosting"] = years_value
-                logger.debug(
-                    f"apply_text_fallbacks: MONTHS_HOSTING matched - '{months_match.group(0)}' ({months} months) -> {years_value} years"
-                )
 
     # === NEW: Extract amenities count from "Show all 59 amenities" ===
     if not snapshot.get("num_amenities"):
@@ -775,12 +761,53 @@ def extract_property_overview(soup):
     return result
 
 
-def extract_price_info(text: str):
+def is_price_near_fee_keyword(text: str, match_start: int, match_end: int) -> bool:
     """
-    Extract price information from text. If multiple prices found, returns the minimum.
+    Check if a price match is near fee-related keywords.
+
+    Args:
+        text: Full text being searched
+        match_start: Start position of price match
+        match_end: End position of price match
 
     Returns:
-        PriceInfo with currency and minimum amount, or None if no prices found
+        True if price is within 50 chars of any fee keyword, False otherwise
+
+    Example:
+        >>> text = "Parking fee: $40 per night"
+        >>> is_price_near_fee_keyword(text, 13, 16)  # Position of "$40"
+        True
+    """
+    # Extract context around the match (50 chars before and after)
+    context_start = max(0, match_start - 50)
+    context_end = min(len(text), match_end + 50)
+    context = text[context_start:context_end].lower()
+
+    # Check if any fee keyword appears in the context
+    for keyword in FEE_KEYWORDS:
+        if keyword in context:
+            logger.debug(
+                f"is_price_near_fee_keyword: Found '{keyword}' near price "
+                f"(context: ...{context[:60]}...)"
+            )
+            return True
+
+    return False
+
+
+def extract_price_info(text: str, snapshot: Optional[Dict[str, Any]] = None):
+    """
+    Extract price information from text.
+
+    Priority order:
+    1. "(currency)XXXX for X nights" pattern (most reliable)
+    2. "(currency)XXXX per night" pattern
+    3. Any "(currency)XXXX" pattern (take minimum)
+
+    If snapshot is provided and nights are found, stores num_of_nights in snapshot.
+
+    Returns:
+        PriceInfo with currency and amount, or None if no prices found
     """
     if not text:
         return None
@@ -790,32 +817,79 @@ def extract_price_info(text: str):
         currency: Optional[str]
         amount: Optional[float]
 
-    # Find ALL price matches in the text
+    # PRIORITY 1: Look for "(currency)XXXX for X nights" pattern
+    # This is the most reliable as it captures both price and nights atomically
+    for match in PRICE_FOR_NIGHTS_PATTERN.finditer(text):
+        currency_symbol = match.group(1)  # e.g., "₪"
+        price_str = match.group(2)  # e.g., "1,670"
+        nights_str = match.group(3)  # e.g., "4"
+
+        amount = parse_number(price_str)
+        nights = parse_number(nights_str)
+
+        if amount is not None and nights is not None and amount > 0 and nights > 0:
+            # Store nights in snapshot if provided
+            if snapshot:
+                snapshot["pricing_details"]["num_of_nights"] = nights
+                logger.debug(
+                    f"extract_price_info: Found price with nights pattern: "
+                    f"{currency_symbol}{price_str} for {nights} nights -> "
+                    f"total=${amount}, nights={nights}"
+                )
+
+            return PriceInfo(
+                currency=map_currency_symbol(currency_symbol), amount=amount
+            )
+
+    # PRIORITY 2: Find prices with "per night" or "a night"
+    # Filter out prices near fee keywords (parking, cleaning, etc.)
     all_prices = []
     currency_found = None
 
-    # First, try to find prices with "per night" or "a night"
     for match in re.finditer(
         rf"{PRICE_SYMBOL_PATTERN}\s?([\d,.]+)\s*(?:per|a)?\s*night", text, re.IGNORECASE
     ):
+        # Check if this price is near fee keywords
+        if is_price_near_fee_keyword(text, match.start(), match.end()):
+            logger.debug(
+                f"extract_price_info: Skipping price near fee keyword: "
+                f"{match.group(1)}{match.group(2)}"
+            )
+            continue
+
         amount = parse_number(match.group(2))
-        if amount is not None:
+        if amount is not None and amount > 0:
             currency_found = currency_found or match.group(1)
             all_prices.append(amount)
             logger.debug(
                 f"extract_price_info: Found price with 'night': {match.group(1)}{match.group(2)} -> {amount}"
             )
 
-    # If no "per night" prices found, search for any prices
-    if not all_prices:
-        for match in re.finditer(rf"{PRICE_SYMBOL_PATTERN}\s?([\d,.]+)", text):
-            amount = parse_number(match.group(2))
-            if amount is not None:
-                currency_found = currency_found or match.group(1)
-                all_prices.append(amount)
-                logger.debug(
-                    f"extract_price_info: Found price: {match.group(1)}{match.group(2)} -> {amount}"
-                )
+    if all_prices:
+        min_price = min(all_prices)
+        logger.debug(
+            f"extract_price_info: Found {len(all_prices)} 'per night' price(s): {all_prices} -> Selected MINIMUM: {min_price}"
+        )
+        return PriceInfo(currency=map_currency_symbol(currency_found), amount=min_price)
+
+    # PRIORITY 3: Search for any prices (fallback)
+    # Filter out prices near fee keywords
+    for match in re.finditer(rf"{PRICE_SYMBOL_PATTERN}\s?([\d,.]+)", text):
+        # Check if this price is near fee keywords
+        if is_price_near_fee_keyword(text, match.start(), match.end()):
+            logger.debug(
+                f"extract_price_info: Skipping price near fee keyword: "
+                f"{match.group(1)}{match.group(2)}"
+            )
+            continue
+
+        amount = parse_number(match.group(2))
+        if amount is not None and amount > 0:
+            currency_found = currency_found or match.group(1)
+            all_prices.append(amount)
+            logger.debug(
+                f"extract_price_info: Found price: {match.group(1)}{match.group(2)} -> {amount}"
+            )
 
     if not all_prices:
         logger.debug("extract_price_info: No prices found")
@@ -881,24 +955,6 @@ def extract_section(
             cutoff = stop_idx
     snippet = remainder[:cutoff]
     return cleanup_text(snippet)
-
-
-def extract_category_ratings(text: str) -> List[Dict[str, str]]:
-    categories = [
-        "Cleanliness",
-        "Accuracy",
-        "Communication",
-        "Location",
-        "Check-in",
-        "Value",
-    ]
-    ratings = []
-    for category in categories:
-        pattern = re.compile(rf"{re.escape(category)}\s+(\d(?:\.\d+)?)", re.IGNORECASE)
-        match = pattern.search(text)
-        if match:
-            ratings.append({"name": category, "value": match.group(1)})
-    return ratings
 
 
 def extract_fee_details(text: str) -> Dict[str, Optional[float]]:

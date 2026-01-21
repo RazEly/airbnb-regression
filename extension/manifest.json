@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Airbnb Calendar Dots",
-  "version": "1.1",
-  "description": "Adds colored dots to dates in Airbnb's calendar picker",
+  "name": "Airbnb Price Predictor",
+  "version": "2.0",
+  "description": "ML-powered price predictions with stoplight indicators and calendar coloring for Airbnb listings",
   "content_scripts": [
     {
       "matches": [
@@ -16,6 +16,7 @@
         "*://*.airbnb.com.au/*"
       ],
       "js": [
+        "overlay.js",
         "content.js"
       ],
       "css": [
@@ -26,6 +27,19 @@
   ],
   "background": {
     "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
   },
   "host_permissions": [
     "http://127.0.0.1:5001/*"

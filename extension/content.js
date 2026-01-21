@@ -369,6 +369,12 @@
     const currentUrl = window.location.href;
     if (currentUrl !== lastObservedUrl) {
       lastObservedUrl = currentUrl;
+      
+      // Hide prediction overlay when navigating away from listing
+      if (!LISTING_URL_REGEX.test(currentUrl) && window.AirbnbPredictionOverlay) {
+        window.AirbnbPredictionOverlay.hide();
+      }
+      
       handleListingUrl(currentUrl);
     } else if (LISTING_URL_REGEX.test(currentUrl) && !lastScrapedListingId) {
       handleListingUrl(currentUrl);
@@ -401,15 +407,46 @@
       return;
     }
 
+    // Show loading overlay while prediction is being calculated
+    if (window.AirbnbPredictionOverlay) {
+      window.AirbnbPredictionOverlay.showLoading();
+    }
+
     chrome.runtime.sendMessage({ action: 'sendListingHtml', payload }, (response) => {
       if (chrome.runtime.lastError) {
         console.error('Airbnb Listing Scraper: upload failed', chrome.runtime.lastError);
+        if (window.AirbnbPredictionOverlay) {
+          window.AirbnbPredictionOverlay.showError('Failed to connect to backend');
+        }
         return;
       }
+      
       if (response && response.status === 'ok') {
         console.log(`Airbnb Listing Scraper: uploaded listing ${listingId}`);
+        
+        // Handle prediction response
+        if (response.prediction) {
+          console.log('Airbnb Prediction: Received prediction data', response.prediction);
+          
+          if (window.AirbnbPredictionOverlay) {
+            if (response.prediction.error) {
+              console.log('Airbnb Prediction: Showing error overlay');
+              window.AirbnbPredictionOverlay.showError(response.prediction.error);
+            } else {
+              console.log('Airbnb Prediction: Showing prediction overlay for listing', listingId);
+              window.AirbnbPredictionOverlay.updateForListing(listingId, response.prediction);
+            }
+          }
+        } else {
+          console.warn('Airbnb Prediction: No prediction data in response - not hiding overlay');
+          // Don't hide overlay if there's no prediction, just log warning
+          // The loading overlay should remain visible or backend may still be processing
+        }
       } else {
         console.warn('Airbnb Listing Scraper: backend did not confirm upload', response);
+        if (window.AirbnbPredictionOverlay) {
+          window.AirbnbPredictionOverlay.showError('Backend processing failed');
+        }
       }
     });
   }

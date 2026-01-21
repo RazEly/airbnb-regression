@@ -1,16 +1,3 @@
-"""
-Feature Engineering Module for Airbnb Price Prediction
-
-This module transforms raw parsed listing data into ML-ready features.
-Maximizes code reuse from data_transformation.py to ensure robustness and
-training/inference parity.
-
-Division of Responsibility:
-- listing_parser.py: Extract raw fields from HTML (strings, numbers, booleans)
-- feature_engineer.py: Transform raw features into ML-ready features
-- model_loader.py: Load trained models and provide prediction infrastructure
-"""
-
 import logging
 import math
 from typing import Any, Dict, Optional
@@ -108,7 +95,6 @@ def calculate_interaction_features(base_features: Dict[str, float]) -> Dict[str,
     ratings = get("ratings")
 
     # Calculate interaction features
-    # NOTE: Add 1 to denominators to avoid division by zero
     interactions = {
         # Capacity-related interactions
         "beds_per_guest": num_beds / (guests + 1),
@@ -174,6 +160,7 @@ def extract_base_features(parsed_data: Dict[str, Any]) -> Dict[str, float]:
         "location_details": data.get("location_details"),
         # Boolean fields
         "is_superhost": data.get("is_superhost"),
+        "is_studio_binary": 1 if "studio" in str(data.get("name", "")).lower() else 0,
         # Geo fields
         "city": data.get("city"),
     }
@@ -239,7 +226,9 @@ def engineer_geospatial_features(
     if matched_city and lat is not None and long is not None:
         cluster_id = model_loader.get_cluster_id(matched_city, lat, long)
         if cluster_id is not None:
-            cluster_median = model_loader.get_cluster_median(matched_city, cluster_id)
+            cluster_median = model_loader.get_cluster_median(
+                matched_city, cluster_id, lat, long
+            )
             if verbose:
                 logger.info(f"  ✓ Assigned to cluster: {cluster_id}")
                 logger.info(f"  Cluster median price: ${cluster_median:.2f}")
@@ -356,68 +345,70 @@ def prepare_features_for_model(
     # Combine all features
     final_features = {}
 
-    # Add continuous features (from metadata.json order)
+    # Add continuous features (in metadata.json order - CRITICAL for model compatibility)
+    final_features["num_baths"] = base_features.get("num_baths")
+    final_features["num_bedrooms"] = base_features.get("num_bedrooms")
+    final_features["num_beds"] = base_features.get("num_beds")
+    final_features["ratings"] = base_features.get("ratings")
+    final_features["bed_to_bedroom_ratio"] = interaction_features[
+        "bed_to_bedroom_ratio"
+    ]
     final_features["review_volume_quality"] = interaction_features[
         "review_volume_quality"
     ]
-    final_features["num_bedrooms"] = base_features.get("num_bedrooms")
-    final_features["median_city"] = geo_features["median_city"]
-    final_features["loc_details_length_logp1"] = text_features[
-        "loc_details_length_logp1"
-    ]
-    final_features["guests"] = base_features.get("guests")
-    final_features["amenities_count"] = base_features.get("amenities_count")
-    final_features["description_length_logp1"] = text_features[
-        "description_length_logp1"
-    ]
+    final_features["host_rating"] = base_features.get("host_rating")
+    final_features["rooms_per_guest"] = interaction_features["rooms_per_guest"]
+    final_features["total_rooms"] = interaction_features["total_rooms"]
     final_features["cluster_median"] = geo_features["cluster_median"]
+    final_features["host_year"] = base_features.get("host_year")
+    final_features["beds_per_guest"] = interaction_features["beds_per_guest"]
+    final_features["superhost_rating_interaction"] = interaction_features[
+        "superhost_rating_interaction"
+    ]
+    final_features["amenities_count"] = base_features.get("amenities_count")
     final_features["host_number_of_reviews"] = base_features.get(
         "host_number_of_reviews"
     )
-    final_features["ratings"] = base_features.get("ratings")
-    final_features["host_rating"] = base_features.get("host_rating")
-    final_features["host_year"] = base_features.get("host_year")
-    final_features["rooms_per_guest"] = interaction_features["rooms_per_guest"]
+    final_features["bedrooms_per_guest"] = interaction_features["bedrooms_per_guest"]
     final_features["property_number_of_reviews"] = base_features.get(
         "property_number_of_reviews"
     )
-    final_features["total_rooms"] = interaction_features["total_rooms"]
-    final_features["lat"] = base_features.get("lat")
-    final_features["long"] = base_features.get("long")
-    final_features["num_baths"] = base_features.get("num_baths")
+    final_features["guest_capacity_ratio"] = interaction_features[
+        "guest_capacity_ratio"
+    ]
+    final_features["guests"] = base_features.get("guests")
 
-    # Add binary feature
     final_features["is_superhost_binary"] = is_superhost_binary
+    final_features["is_studio_binary"] = base_features.get("is_studio_binary")
 
-    # Preserve metadata (not used for ML model, but needed for reporting)
     if "city_name" in geo_features:
         final_features["city_name"] = geo_features["city_name"]
     if "cluster_id" in geo_features:
         final_features["cluster_id"] = geo_features["cluster_id"]
 
-    # Validation: Check that all required features are present
     required_continuous = [
-        "review_volume_quality",
-        "num_bedrooms",
-        "median_city",
-        "loc_details_length_logp1",
-        "guests",
-        "amenities_count",
-        "description_length_logp1",
-        "cluster_median",
-        "host_number_of_reviews",
-        "ratings",
-        "host_rating",
-        "host_year",
-        "rooms_per_guest",
-        "property_number_of_reviews",
-        "total_rooms",
-        "lat",
-        "long",
         "num_baths",
+        "num_bedrooms",
+        "num_beds",
+        "ratings",
+        "bed_to_bedroom_ratio",
+        "review_volume_quality",
+        "host_rating",
+        "rooms_per_guest",
+        "total_rooms",
+        "cluster_median",
+        "host_year",
+        "beds_per_guest",
+        "superhost_rating_interaction",
+        "amenities_count",
+        "host_number_of_reviews",
+        "bedrooms_per_guest",
+        "property_number_of_reviews",
+        "guest_capacity_ratio",
+        "guests",
     ]
 
-    required_binary = ["is_superhost_binary"]
+    required_binary = ["is_superhost_binary", "is_studio_binary"]
 
     all_required = required_continuous + required_binary
 

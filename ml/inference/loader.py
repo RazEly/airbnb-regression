@@ -6,20 +6,17 @@ Loads all ML pipeline artifacts and provides inference utilities:
 - VectorAssemblers (reconstructed from configs)
 - Lookup dictionaries (city medians, cluster medians)
 - KNN classifiers for cluster assignment
-
-Author: ML Integration Team
-Date: 2026-01-19
 """
 
 import json
 import os
-from typing import Optional, Dict, Any, Tuple
+from typing import Any, Dict, Optional, Tuple
 
-import pandas as pd
-from pyspark.ml.regression import GBTRegressionModel
-from pyspark.ml.feature import ImputerModel, StandardScalerModel, VectorAssembler
-from sklearn.neighbors import KNeighborsClassifier
 import numpy as np
+import pandas as pd
+from pyspark.ml.feature import ImputerModel, StandardScalerModel, VectorAssembler
+from pyspark.ml.regression import GBTRegressionModel
+from sklearn.neighbors import KNeighborsClassifier
 
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -33,7 +30,7 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     Returns:
         Distance in kilometers
     """
-    from math import radians, sin, cos, sqrt, atan2
+    from math import atan2, cos, radians, sin, sqrt
 
     R = 6371  # Earth's radius in km
 
@@ -57,16 +54,19 @@ class ModelLoader:
         median = loader.get_city_median("Greater London")
     """
 
-    def __init__(self, spark, model_dir="./models"):
+    def __init__(self, spark, model_dir="./models", max_fallback_distance_km=50.0):
         """
         Initialize the model loader.
 
         Args:
             spark: SparkSession instance
             model_dir: Path to directory containing model artifacts
+            max_fallback_distance_km: Maximum distance (km) to search for clustered cities
+                                     when direct city match has no clusters. Default: 50km
         """
         self.spark = spark
         self.model_dir = model_dir
+        self.max_fallback_distance_km = max_fallback_distance_km
 
         print(f"Loading ML models from {model_dir}...")
 
@@ -126,6 +126,8 @@ class ModelLoader:
         # Build KNN classifiers for cluster assignment (one per city)
         print("  [7/7] Building KNN classifiers for cluster assignment...")
         self.knn_models = {}
+        self.clustered_city_centers = {}  # Store centers of cities with clusters
+
         for city in cluster_pdf["city"].unique():
             city_data = cluster_pdf[cluster_pdf["city"] == city]
 
@@ -138,7 +140,14 @@ class ModelLoader:
             knn.fit(X, y)
             self.knn_models[city] = knn
 
+            # Store the center of this clustered city for fallback matching
+            if city in self.city_centers:
+                self.clustered_city_centers[city] = self.city_centers[city]
+
         print(f"  ✓ Built KNN models for {len(self.knn_models)} cities")
+        print(
+            f"  ✓ Cluster fallback enabled (max distance: {max_fallback_distance_km}km)"
+        )
 
         # Load metadata
         with open(f"{model_dir}/metadata.json", "r") as f:
@@ -186,11 +195,46 @@ class ModelLoader:
 
         return nearest_city
 
+    def find_nearest_clustered_city(
+        self, lat: float, lon: float
+    ) -> Optional[Tuple[str, float]]:
+        """
+        Find the nearest city that has cluster data.
+
+        Args:
+            lat: Latitude
+            lon: Longitude
+
+        Returns:
+            Tuple of (city_name, distance_km) or None if no clustered city within threshold
+        """
+        if lat is None or lon is None:
+            return None
+
+        nearest_clustered_city = None
+        min_distance = float("inf")
+
+        # Search only among cities that have cluster data
+        for city, coords in self.clustered_city_centers.items():
+            distance = haversine_distance(lat, lon, coords["lat"], coords["lon"])
+            if distance < min_distance:
+                min_distance = distance
+                nearest_clustered_city = city
+
+        # Only return if within max fallback distance
+        if min_distance <= self.max_fallback_distance_km:
+            return (nearest_clustered_city, min_distance)
+
+        return None
+
     def get_cluster_id(
         self, city: Optional[str], lat: Optional[float], lon: Optional[float]
     ) -> int:
         """
         Get cluster ID for a listing using KNN on (lat, long).
+
+        Implements intelligent fallback: if the matched city has no cluster data,
+        attempts to find the nearest city WITH clusters within max_fallback_distance_km.
 
         Args:
             city: Matched city name (from match_city_by_distance)
@@ -198,30 +242,51 @@ class ModelLoader:
             lon: Longitude
 
         Returns:
-            int: Cluster ID, or -1 if city not found or coordinates missing
+            int: Cluster ID, or -1 if no clusters found
 
         Examples:
-            >>> loader.get_cluster_id("Greater London", 51.5074, -0.1278)
+            >>> loader.get_cluster_id("Paris", 48.8566, 2.3522)
             42
+            >>> loader.get_cluster_id("9th District", 48.8809, 2.3274)
+            # Falls back to Paris -> returns Paris cluster
             >>> loader.get_cluster_id("Unknown City", 51.5074, -0.1278)
             -1
             >>> loader.get_cluster_id("Greater London", None, None)
             -1
         """
-        # Return -1 if missing data
-        if not city or lat is None or lon is None:
+        # Return -1 if missing coordinates
+        if lat is None or lon is None:
             return -1
 
-        # Check if we have a KNN model for this city
-        if city not in self.knn_models:
-            return -1
+        # Try direct city match first
+        if city and city in self.knn_models:
+            # Direct match - predict cluster using this city's KNN model
+            knn = self.knn_models[city]
+            X = np.array([[lat, lon]])
+            cluster_id = knn.predict(X)[0]
+            return int(cluster_id)
 
-        # Predict cluster using KNN
-        knn = self.knn_models[city]
-        X = np.array([[lat, lon]])
-        cluster_id = knn.predict(X)[0]
+        # Fallback: City has no cluster data, try to find nearest clustered city
+        fallback_result = self.find_nearest_clustered_city(lat, lon)
+        if fallback_result:
+            fallback_city, distance = fallback_result
+            # Use the fallback city's KNN model to predict cluster
+            knn = self.knn_models[fallback_city]
+            X = np.array([[lat, lon]])
+            cluster_id = knn.predict(X)[0]
 
-        return int(cluster_id)
+            # Log the fallback for debugging/monitoring
+            import logging
+
+            logging.info(
+                f"Cluster fallback: '{city}' -> '{fallback_city}' "
+                f"({distance:.2f}km away) -> cluster {cluster_id}"
+            )
+
+            return int(cluster_id)
+
+        # No clustered city found within threshold
+        return -1
 
     def get_city_median(self, city: Optional[str]) -> float:
         """
@@ -238,22 +303,48 @@ class ModelLoader:
 
         return self.city_medians[city]
 
-    def get_cluster_median(self, city: Optional[str], cluster_id: int) -> float:
+    def get_cluster_median(
+        self,
+        city: Optional[str],
+        cluster_id: int,
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
+    ) -> float:
         """
         Get median price for a cluster (log-scale).
+
+        Implements intelligent fallback: if the matched city has no cluster data,
+        attempts to use the cluster median from the nearest clustered city.
 
         Args:
             city: Matched city name
             cluster_id: Cluster ID from get_cluster_id
+            lat: Optional latitude for fallback matching
+            lon: Optional longitude for fallback matching
 
         Returns:
             float: Cluster median price (log-scale), or global median if not found
         """
-        if not city or cluster_id == -1:
+        if cluster_id == -1:
             return self.global_median
 
-        key = f"{city}|{cluster_id}"
-        return self.cluster_medians.get(key, self.global_median)
+        # Try direct city|cluster lookup first
+        if city:
+            key = f"{city}|{cluster_id}"
+            if key in self.cluster_medians:
+                return self.cluster_medians[key]
+
+        # If we have coordinates, try fallback to nearest clustered city
+        if lat is not None and lon is not None:
+            fallback_result = self.find_nearest_clustered_city(lat, lon)
+            if fallback_result:
+                fallback_city, _ = fallback_result
+                key = f"{fallback_city}|{cluster_id}"
+                if key in self.cluster_medians:
+                    return self.cluster_medians[key]
+
+        # Fall back to global median
+        return self.global_median
 
 
 if __name__ == "__main__":

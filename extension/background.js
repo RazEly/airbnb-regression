@@ -89,6 +89,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'sendListingHtml') {
     uploadListingDocument(request.payload)
       .then((data) => {
+        // Pass through the full response including prediction data
         sendResponse(data || { status: 'ok' });
       })
       .catch((error) => {
