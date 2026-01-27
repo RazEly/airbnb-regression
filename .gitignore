@@ -14,7 +14,6 @@ conda-env/
 # Data files (large datasets)
 data/
 *.csv
-*.parquet
 
 # ML Models (large artifacts)
 # Note: models/production/ is committed because it contains trained models
@@ -31,10 +30,6 @@ data/
 *.pth
 
 # Databases
-*.db
-*.sqlite
-*.sqlite3
-backend/database/debug_captures/
 
 # IDE
 .idea/
