@@ -71,18 +71,18 @@ class ModelLoader:
         print(f"Loading ML models from {model_dir}...")
 
         # Load PySpark models
-        print("  [1/7] Loading GBT model...")
+        print("  [1/8] Loading GBT model...")
         self.gbt_model = GBTRegressionModel.load(f"{model_dir}/gbt_model")
 
-        print("  [2/7] Loading imputers...")
+        print("  [2/8] Loading imputers...")
         self.imputer_continuous = ImputerModel.load(f"{model_dir}/imputer_continuous")
         self.imputer_binary = ImputerModel.load(f"{model_dir}/imputer_binary")
 
-        print("  [3/7] Loading scaler...")
+        print("  [3/8] Loading scaler...")
         self.scaler = StandardScalerModel.load(f"{model_dir}/scaler_continuous")
 
         # Load VectorAssembler configurations
-        print("  [4/7] Loading assembler configurations...")
+        print("  [4/8] Loading assembler configurations...")
         with open(f"{model_dir}/assembler_configs.json", "r") as f:
             assembler_configs = json.load(f)
 
@@ -101,7 +101,7 @@ class ModelLoader:
         )
 
         # Load lookup dictionaries
-        print("  [5/7] Loading lookup dictionaries...")
+        print("  [5/8] Loading lookup dictionaries...")
         with open(f"{model_dir}/city_medians.json", "r") as f:
             self.city_medians = json.load(f)
 
@@ -119,12 +119,44 @@ class ModelLoader:
             self.top_cities = json.load(f)
 
         # Load cluster data from Parquet
-        print("  [6/7] Loading cluster data from Parquet...")
+        print("  [6/8] Loading cluster data from Parquet...")
         cluster_pdf = pd.read_parquet(f"{model_dir}/cluster_data.parquet")
         print(f"  - Loaded {len(cluster_pdf):,} cluster points")
 
+        # Load train stations and airports data
+        print("  [7/8] Loading train stations and airports data...")
+
+        # IMPORTANT: The distance calculation requires h3_index for spatial optimization.
+        # If the parquet files don't have it (legacy data), we compute it at runtime.
+        # Performance impact: ~100ms one-time cost at model initialization.
+        # See: ml/utils/geo.py get_closest_distance()
+
+        try:
+            self.train_stations = pd.read_parquet(f"{model_dir}/train_stations.parquet")
+            if "h3_index" not in self.train_stations.columns:
+                print("  - Computing h3_index for train stations...")
+                from ml.utils.geo import add_h3_index
+
+                self.train_stations = add_h3_index(self.train_stations, h3_resolution=3)
+        except FileNotFoundError:
+            print(
+                "  - train_stations.parquet not found, using empty dataframe instead."
+            )
+            self.train_stations = pd.DataFrame(columns=["lat", "long"])
+
+        try:
+            self.airports = pd.read_parquet(f"{model_dir}/airports.parquet")
+            if "h3_index" not in self.airports.columns:
+                print("  - Computing h3_index for airports...")
+                from ml.utils.geo import add_h3_index
+
+                self.airports = add_h3_index(self.airports, h3_resolution=3)
+        except FileNotFoundError:
+            print("  - airports.parquet not found, using empty dataframe instead.")
+            self.airports = pd.DataFrame(columns=["lat", "long"])
+
         # Build KNN classifiers for cluster assignment (one per city)
-        print("  [7/7] Building KNN classifiers for cluster assignment...")
+        print("  [8/8] Building KNN classifiers for cluster assignment...")
         self.knn_models = {}
         self.clustered_city_centers = {}  # Store centers of cities with clusters
 

@@ -328,6 +328,27 @@ model_dir = project_root / "models" / "production"
 
 ## Troubleshooting
 
+### Distance features always return 100.0
+
+**Symptoms:** The `distance_to_closest_airport` and `distance_to_closest_train_station` features always return 100.0 km regardless of listing location.
+
+**Cause:** The parquet files are missing the `h3_index` column required for spatial optimization (legacy data).
+
+**Fix:** The model loader automatically adds h3_index at runtime (no action needed). If you want to pre-compute it for better performance:
+
+```bash
+# Regenerate parquet files with h3_index
+python3 ml/precompute_h3_indexes.py
+```
+
+This regenerates `airports.parquet` and `train_stations.parquet` with h3_index included, eliminating the ~100ms runtime computation overhead.
+
+**Verify the fix:**
+```bash
+# Run distance feature tests
+python3 ml/inference/test_distance_features.py
+```
+
 ### "conda: command not found" or conda not available
 You need to install Miniconda or Anaconda first:
 ```bash
