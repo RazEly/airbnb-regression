@@ -9,6 +9,7 @@ Loads all ML pipeline artifacts and provides inference utilities:
 """
 
 import json
+import logging
 import os
 from typing import Any, Dict, Optional, Tuple
 
@@ -17,6 +18,8 @@ import pandas as pd
 from pyspark.ml.feature import ImputerModel, StandardScalerModel, VectorAssembler
 from pyspark.ml.regression import GBTRegressionModel
 from sklearn.neighbors import KNeighborsClassifier
+
+logger = logging.getLogger(__name__)
 
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -69,6 +72,7 @@ class ModelLoader:
         self.max_fallback_distance_km = max_fallback_distance_km
 
         print(f"Loading ML models from {model_dir}...")
+        logger.info(f"Loading ML models from {model_dir}")
 
         # Load PySpark models
         print("  [1/8] Loading GBT model...")
@@ -122,6 +126,7 @@ class ModelLoader:
         print("  [6/8] Loading cluster data from Parquet...")
         cluster_pdf = pd.read_parquet(f"{model_dir}/cluster_data.parquet")
         print(f"  - Loaded {len(cluster_pdf):,} cluster points")
+        logger.info(f"Loaded {len(cluster_pdf)} cluster points")
 
         # Load train stations and airports data
         print("  [7/8] Loading train stations and airports data...")
@@ -142,6 +147,7 @@ class ModelLoader:
             print(
                 "  - train_stations.parquet not found, using empty dataframe instead."
             )
+            logger.warning("train_stations.parquet not found, using empty dataframe")
             self.train_stations = pd.DataFrame(columns=["lat", "long"])
 
         try:
@@ -153,6 +159,7 @@ class ModelLoader:
                 self.airports = add_h3_index(self.airports, h3_resolution=3)
         except FileNotFoundError:
             print("  - airports.parquet not found, using empty dataframe instead.")
+            logger.warning("airports.parquet not found, using empty dataframe")
             self.airports = pd.DataFrame(columns=["lat", "long"])
 
         # Build KNN classifiers for cluster assignment (one per city)
@@ -192,6 +199,11 @@ class ModelLoader:
         print(
             f"  - Performance: R²={self.metadata['performance_metrics']['R2']:.3f}, "
             f"RMSE={self.metadata['performance_metrics']['RMSE']:.3f}"
+        )
+        logger.info(
+            f"Models loaded: {self.metadata['num_cities']} cities, "
+            f"{self.metadata['num_clusters']} clusters, "
+            f"R²={self.metadata['performance_metrics']['R2']:.3f}"
         )
 
     def match_city_by_distance(self, lat: float, lon: float) -> Optional[str]:

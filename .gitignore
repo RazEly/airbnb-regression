@@ -1,6 +1,11 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
 .ipynb_checkpoints/
 .ruff_cache/
 models/production/.databricks/token-cache.json
+
+# Debug captures
+backend/database/debug_captures/*.html
+backend/database/debug_captures/*.json

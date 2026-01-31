@@ -9,8 +9,13 @@ from bs4 import BeautifulSoup
 
 # Configure logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format="%(levelname)s [%(name)s] %(message)s")
 
+# Validation constants
+GUEST_COUNT_MIN = 1
+GUEST_COUNT_MAX = 50
+PRICE_CONTEXT_WINDOW_CHARS = 50
+
+# Regex patterns
 PRICE_SYMBOL_PATTERN = (
     r"(US\$|CA\$|A\$|C\$|NZ\$|MX\$|S\$|HK\$|NT\$|R\$|CHF|₱|₩|¥|₹|₺|₫|kr|₪|€|£|\$)"
 )
@@ -24,15 +29,14 @@ REVIEW_COUNT_REGEX = re.compile(r"(\d{1,4})\s+reviews?", re.IGNORECASE)
 HOST_SINCE_REGEX = re.compile(r"Hosting since\s+(\d{4})", re.IGNORECASE)
 RESPONSE_RATE_REGEX = re.compile(r"Response rate:\s*(\d+%)", re.IGNORECASE)
 NIGHTS_REGEX = re.compile(r"for\s+(\d+)\s+nights?", re.IGNORECASE)
-# === PRICE WITH NIGHTS PATTERN ===
-# Pattern: (currency)XXXX for X nights - e.g., "₪1,670 for 4 nights"
-# Updated to handle variations like "Show price breakdown for X nights"
+
+# Price with nights pattern
 PRICE_FOR_NIGHTS_PATTERN = re.compile(
     rf"{PRICE_SYMBOL_PATTERN}\s?([\d,.]+)(?:\s+|.*?\s+)for\s+(\d+)\s+nights?",
     re.IGNORECASE,
 )
-# === FEE FILTERING KEYWORDS ===
-# Keywords to identify non-listing prices (parking, cleaning, etc.)
+
+# Fee filtering keywords
 FEE_KEYWORDS = [
     "parking",
     "valet",
@@ -44,7 +48,8 @@ FEE_KEYWORDS = [
     "resort fee",
     "amenity fee",
 ]
-# === NEW PATTERNS ===
+
+# Additional extraction patterns
 AMENITIES_COUNT_REGEX = re.compile(r"Show\s+all\s+(\d+)\s+amenities?", re.IGNORECASE)
 HOST_RATING_REGEX = re.compile(
     r"(\d+\.\d+)\s*out\s*of\s*5\s*average\s*rating", re.IGNORECASE
@@ -95,18 +100,16 @@ def create_empty_snapshot() -> Dict[str, Any]:
     """
     Create snapshot with all extracted fields.
 
-    FIELDS REQUIRED BY PRODUCTION MODEL (models/production/metadata.json):
+    Fields required by production model (models/production/metadata.json):
     - num_bedrooms, num_beds, num_baths, guests, num_amenities
     - ratings, property_number_of_reviews, host_rating, host_number_of_reviews
     - is_superhost, host_year
     - lat, long, city
     - name (used for is_studio_binary detection)
-
-    Other fields are extracted for completeness but not used by the model.
     """
     return {
-        # === REQUIRED BY MODEL ===
-        "name": None,  # Used for is_studio_binary
+        # Required by model
+        "name": None,
         "num_bedrooms": None,
         "num_beds": None,
         "num_baths": None,
@@ -121,7 +124,7 @@ def create_empty_snapshot() -> Dict[str, Any]:
         "lat": None,
         "long": None,
         "city": None,
-        # === NOT USED BY MODEL (kept for compatibility) ===
+        # Not used by model (kept for compatibility)
         "property_type": None,
         "price": None,
         "currency": None,
@@ -161,7 +164,6 @@ def extract_dates_from_url(url: Optional[str]) -> tuple:
         ('2026-04-13', '2026-04-18')
     """
     if not url:
-        logger.debug("extract_dates_from_url: No URL provided")
         return None, None
 
     check_in = None
@@ -171,13 +173,11 @@ def extract_dates_from_url(url: Optional[str]) -> tuple:
     check_in_match = re.search(r"check_in=(\d{4}-\d{2}-\d{2})", url)
     if check_in_match:
         check_in = check_in_match.group(1)
-        logger.debug(f"extract_dates_from_url: Found check_in={check_in}")
 
     # Match check_out=YYYY-MM-DD
     check_out_match = re.search(r"check_out=(\d{4}-\d{2}-\d{2})", url)
     if check_out_match:
         check_out = check_out_match.group(1)
-        logger.debug(f"extract_dates_from_url: Found check_out={check_out}")
 
     return check_in, check_out
 
@@ -207,7 +207,6 @@ def extract_host_stats(html_text: str) -> tuple:
     match = HOST_REVIEW_COUNT_JSON_REGEX.search(html_text)
     if match:
         host_reviews = int(match.group(1))
-        logger.debug(f"extract_host_stats: Found host_reviews={host_reviews}")
 
     # Extract years hosting and calculate host_year
     match = YEARS_HOSTING_JSON_REGEX.search(html_text)
@@ -215,9 +214,6 @@ def extract_host_stats(html_text: str) -> tuple:
         years_hosting = int(match.group(1))
         current_year = datetime.now().year
         host_year = current_year - years_hosting
-        logger.debug(
-            f"extract_host_stats: Found years_hosting={years_hosting}, calculated host_year={host_year}"
-        )
 
     return host_reviews, host_year
 
@@ -232,39 +228,27 @@ def parse_listing_document(
     if not html:
         raise ValueError("HTML payload is required for parsing")
 
-    logger.debug("=" * 70)
-    logger.debug(f"parse_listing_document: Starting parse for listing_id={listing_id}")
-    logger.debug(f"parse_listing_document: HTML length: {len(html):,} chars")
-    logger.debug(f"parse_listing_document: URL: {url}")
+    logger.info(f"Parsing listing: {listing_id or 'unknown'}")
 
     soup = BeautifulSoup(html, "html.parser")
     snapshot = create_empty_snapshot()
 
-    # === NEW: Extract dates from URL ===
+    # Extract dates from URL
     if url:
         check_in, check_out = extract_dates_from_url(url)
         snapshot["check_in"] = check_in
         snapshot["check_out"] = check_out
 
-    # === Fallback: Extract dates from HTML if not in URL ===
+    # Fallback: extract dates from HTML if not in URL
     if not snapshot["check_in"] or not snapshot["check_out"]:
         check_in_html, check_out_html = extract_dates_from_url(html)
         snapshot["check_in"] = snapshot["check_in"] or check_in_html
         snapshot["check_out"] = snapshot["check_out"] or check_out_html
 
-    # === NEW: Extract property overview (single source of truth) ===
-    logger.debug("parse_listing_document: Extracting property overview...")
+    # Extract property overview (single source of truth)
     property_overview = extract_property_overview(soup)
 
     if property_overview:
-        logger.debug("parse_listing_document: Found property overview")
-        logger.debug(f"  property_type: {property_overview.get('property_type')}")
-        logger.debug(f"  city: {property_overview.get('city')}")
-        logger.debug(f"  guests: {property_overview.get('guests')}")
-        logger.debug(f"  bedrooms: {property_overview.get('bedrooms')}")
-        logger.debug(f"  beds: {property_overview.get('beds')}")
-        logger.debug(f"  baths: {property_overview.get('baths')}")
-
         # Populate snapshot with overview data
         snapshot["property_type"] = property_overview.get("property_type")
         snapshot["city"] = property_overview.get("city")
@@ -272,48 +256,30 @@ def parse_listing_document(
         snapshot["num_bedrooms"] = property_overview.get("bedrooms")
         snapshot["num_beds"] = property_overview.get("beds")
         snapshot["num_baths"] = property_overview.get("baths")
-    else:
-        logger.debug("parse_listing_document: Property overview element not found")
 
     # Extract structured data first
-    logger.debug("parse_listing_document: Extracting JSON-LD blocks...")
     for ld_block in extract_ld_json_blocks(soup):
         apply_ld_json(snapshot, ld_block)
 
     # Fallbacks from visible DOM/text
     page_text = " ".join(soup.stripped_strings)
-    logger.debug(f"parse_listing_document: Page text length: {len(page_text):,} chars")
-    logger.debug("parse_listing_document: Applying DOM fallbacks...")
     apply_dom_fallbacks(snapshot, soup)
-    logger.debug("parse_listing_document: Applying text fallbacks...")
     apply_text_fallbacks(snapshot, page_text)
-    logger.debug("parse_listing_document: Applying geo extraction...")
     apply_geo_from_html(snapshot, html)
 
-    # === FINAL: Simplified superhost detection (overrides all previous) ===
-    # Simple, reliable check: if "superhost" appears anywhere in page text
+    # Simplified superhost detection (overrides previous)
     page_text_lower = page_text.lower()
     snapshot["is_superhost"] = "superhost" in page_text_lower
-    logger.debug(
-        f"Superhost detection: {'✓ YES' if snapshot['is_superhost'] else '✗ NO'} (searched in {len(page_text):,} chars)"
-    )
 
-    # === Extract host statistics (host reviews and hosting year) ===
-    logger.debug("parse_listing_document: Extracting host statistics...")
+    # Extract host statistics (host reviews and hosting year)
     host_reviews, host_year = extract_host_stats(html)
     if host_reviews is not None:
         snapshot["host_number_of_reviews"] = host_reviews
-        logger.debug(f"  host_number_of_reviews: {host_reviews}")
     if host_year is not None:
         snapshot["host_year"] = host_year
-        logger.debug(f"  host_year: {host_year}")
 
-    # === Calculate price per night ===
-    logger.debug("parse_listing_document: Calculating price per night...")
+    # Calculate price per night
     calculate_price_per_night(snapshot)
-
-    logger.debug("parse_listing_document: Parse complete")
-    logger.debug("=" * 70)
 
     return {
         "listing_id": listing_id,
@@ -492,7 +458,7 @@ def apply_dom_fallbacks(snapshot: Dict[str, Any], soup: BeautifulSoup) -> None:
         if guests_match and not snapshot.get("guests"):
             num = parse_number(guests_match.group(1))
             # Validate reasonable guest count (filter out dates/years)
-            if num and 1 <= num <= 50:
+            if num and GUEST_COUNT_MIN <= num <= GUEST_COUNT_MAX:
                 snapshot["guests"] = num
         if not snapshot.get("details"):
             chunks = [cleanup_text(part) for part in summary.split("·")]
@@ -505,7 +471,7 @@ def apply_dom_fallbacks(snapshot: Dict[str, Any], soup: BeautifulSoup) -> None:
         texts = [cleanup_text(node.get_text()) for node in review_nodes]
         snapshot["reviews"] = [text for text in texts if text][:10]
 
-    # === NEW: Extract amenities count from "Show all 59 amenities" ===
+    # Extract amenities count from "Show all X amenities"
     if not snapshot.get("num_amenities"):
         page_text = " ".join(soup.stripped_strings)
         amenities_match = AMENITIES_COUNT_REGEX.search(page_text)
@@ -522,10 +488,6 @@ def apply_text_fallbacks(snapshot: Dict[str, Any], text: str) -> None:
         snapshot["price"] = price_info.amount
         snapshot["currency"] = snapshot.get("currency") or price_info.currency
 
-    # === REMOVED: Capacity details now extracted in extract_property_overview() ===
-    # === REMOVED: num_of_nights now extracted in extract_price_info() ===
-    # Old code: extract_capacity_details(text) - no longer needed
-
     rating_match = RATING_WITH_REVIEWS_REGEX.search(text)
     if rating_match:
         snapshot["ratings"] = snapshot.get("ratings") or parse_number(
@@ -539,9 +501,6 @@ def apply_text_fallbacks(snapshot: Dict[str, Any], text: str) -> None:
         json_rating_match = RATING_JSON_REGEX.search(text)
         if json_rating_match:
             snapshot["ratings"] = parse_number(json_rating_match.group(1))
-            logger.debug(
-                f"apply_text_fallbacks: JSON rating fallback matched - {snapshot['ratings']}"
-            )
 
     if not snapshot.get("property_number_of_reviews"):
         fallback_reviews = REVIEW_COUNT_REGEX.search(text)
@@ -583,27 +542,19 @@ def apply_text_fallbacks(snapshot: Dict[str, Any], text: str) -> None:
         if value is not None and snapshot["pricing_details"].get(key) is None:
             snapshot["pricing_details"][key] = value
 
-    # === REMOVED: City extraction now done in extract_property_overview() ===
-
-    # === NEW: Extract amenities count from "Show all 59 amenities" ===
+    # Extract amenities count from "Show all X amenities"
     if not snapshot.get("num_amenities"):
         amenities_match = AMENITIES_COUNT_REGEX.search(text)
         if amenities_match:
             amenities_count = parse_number(amenities_match.group(1))
             snapshot["num_amenities"] = amenities_count
-            logger.debug(
-                f"apply_text_fallbacks: AMENITIES matched - '{amenities_match.group(0)}' -> {amenities_count}"
-            )
 
-    # === NEW: Extract host rating from "4.68 out of 5 average rating" ===
+    # Extract host rating from "X out of 5 average rating"
     if not snapshot.get("host_rating"):
         rating_match = HOST_RATING_REGEX.search(text)
         if rating_match:
             rating_value = parse_number(rating_match.group(1))
             snapshot["host_rating"] = rating_value
-            logger.debug(
-                f"apply_text_fallbacks: HOST_RATING matched - '{rating_match.group(0)}' -> {rating_value}"
-            )
 
 
 def apply_geo_from_html(snapshot: Dict[str, Any], html: str) -> None:
@@ -638,16 +589,11 @@ def calculate_price_per_night(snapshot: Dict[str, Any]) -> None:
 
     # Skip if no price
     if total_price is None or total_price <= 0:
-        logger.debug("calculate_price_per_night: No valid price, skipping")
         return
 
     # Try to use num_of_nights from parsing
     if num_nights and num_nights > 0:
         price_per_night = total_price / num_nights
-        logger.debug(
-            f"calculate_price_per_night: "
-            f"{total_price} / {num_nights} nights = {price_per_night:.2f} per night"
-        )
 
     # Fallback: Calculate nights from dates if available
     elif check_in and check_out:
@@ -660,41 +606,24 @@ def calculate_price_per_night(snapshot: Dict[str, Any]) -> None:
                 price_per_night = total_price / nights
                 # Also update num_of_nights
                 snapshot["pricing_details"]["num_of_nights"] = float(nights)
-                logger.debug(
-                    f"calculate_price_per_night: "
-                    f"Calculated {nights} nights from dates, "
-                    f"{total_price} / {nights} = {price_per_night:.2f} per night"
-                )
             else:
                 # Invalid date range
                 price_per_night = total_price
                 logger.warning(
-                    f"calculate_price_per_night: Invalid date range "
-                    f"({check_in} to {check_out}), using total price as-is"
+                    f"Invalid date range ({check_in} to {check_out}), using total price"
                 )
         except (ValueError, AttributeError) as e:
             # Date parsing failed
             price_per_night = total_price
-            logger.warning(
-                f"calculate_price_per_night: Date parsing failed ({e}), "
-                f"using total price as-is"
-            )
+            logger.warning(f"Date parsing failed: {e}, using total price")
 
     # Ultimate fallback: Assume total price is for 1 night
     else:
         price_per_night = total_price
-        logger.debug(
-            f"calculate_price_per_night: "
-            f"No num_of_nights or dates, assuming 1 night: {price_per_night}"
-        )
 
     # Update both price_per_night fields
     snapshot["pricing_details"]["price_per_night"] = price_per_night
     snapshot["pricing_details"]["initial_price_per_night"] = price_per_night
-
-    logger.debug(
-        f"calculate_price_per_night: Final price_per_night = {price_per_night:.2f}"
-    )
 
 
 def summarize_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
@@ -737,16 +666,12 @@ def extract_property_overview(soup):
     if not soup:
         return None
 
-    logger.debug("extract_property_overview: Starting extraction")
-
     # Step 1: Find the h2 with elementtiming="LCP-target"
     lcp_heading = soup.find("h2", {"elementtiming": "LCP-target"})
     if not lcp_heading:
-        logger.debug("extract_property_overview: LCP-target heading not found")
         return None
 
     heading_text = lcp_heading.get_text(strip=True)
-    logger.debug(f"extract_property_overview: Found heading: '{heading_text}'")
 
     # Step 2: Parse the heading text to extract property type and city
     # Expected format: "[Property Type] in [City/Location]"
@@ -765,31 +690,21 @@ def extract_property_overview(soup):
         # Keep only the city and country part by splitting on common delimiters
         # Strategy: Take everything up to the first number or digit pattern
         city = re.split(r"\s+\d+", city_raw)[0].strip()
-
-        logger.debug(
-            f"extract_property_overview: property_type='{property_type}', city='{city}' (raw: '{city_raw}')"
-        )
     else:
-        logger.debug(
-            f"extract_property_overview: Heading doesn't match expected pattern"
-        )
         return None
 
     # Step 3: Find the following <ol class="lgx66tx"> containing capacity details
     # Navigate from h2 -> find parent section -> find ol
     section = lcp_heading.find_parent("section")
     if not section:
-        logger.debug("extract_property_overview: Parent section not found")
         return None
 
     capacity_list = section.find("ol", class_="lgx66tx")
     if not capacity_list:
-        logger.debug("extract_property_overview: Capacity list (ol.lgx66tx) not found")
         return None
 
     # Step 4: Extract all <li> text content and parse capacity details
     list_items = capacity_list.find_all("li", recursive=False)
-    logger.debug(f"extract_property_overview: Found {len(list_items)} list items")
 
     guests = None
     bedrooms = None
@@ -803,8 +718,6 @@ def extract_property_overview(soup):
         # Remove bullet characters
         text = text.replace("·", "").strip()
 
-        logger.debug(f"  Item {idx + 1}: '{text}'")
-
         # Use the existing CAPACITY_REGEX to parse
         match = CAPACITY_REGEX.search(text)
         if match:
@@ -812,26 +725,19 @@ def extract_property_overview(soup):
             keyword = (match.group(2) or "").lower()
 
             if keyword.startswith("guest") and guests is None:
-                # Validate that it's a reasonable guest count (1-30 typical for Airbnb)
+                # Validate that it's a reasonable guest count (1-50 typical for Airbnb)
                 # Filter out dates/years (like 2026) that might be matched
-                if number and 1 <= number <= 50:
+                if number and GUEST_COUNT_MIN <= number <= GUEST_COUNT_MAX:
                     guests = number
-                    logger.debug(f"    -> Extracted GUESTS: {guests}")
-                else:
-                    logger.debug(f"    -> Rejected unreasonable guest count: {number}")
             elif keyword.startswith("bedroom") and bedrooms is None:
                 bedrooms = number
-                logger.debug(f"    -> Extracted BEDROOMS: {bedrooms}")
             elif (keyword == "bed" or keyword == "beds") and beds is None:
                 beds = number
-                logger.debug(f"    -> Extracted BEDS: {beds}")
             elif (keyword.startswith("bath") or keyword == "baths") and baths is None:
                 baths = number
-                logger.debug(f"    -> Extracted BATHS: {baths}")
         elif "studio" in text.lower() and bedrooms is None:
             # Handle studio listings - they have 0 bedrooms by convention
             bedrooms = 0
-            logger.debug(f"    -> Detected STUDIO (bedrooms=0)")
 
     result = {
         "property_type": property_type,
@@ -842,7 +748,6 @@ def extract_property_overview(soup):
         "baths": baths,
     }
 
-    logger.debug(f"extract_property_overview: Extraction complete")
     return result
 
 
@@ -863,18 +768,14 @@ def is_price_near_fee_keyword(text: str, match_start: int, match_end: int) -> bo
         >>> is_price_near_fee_keyword(text, 13, 16)  # Position of "$40"
         True
     """
-    # Extract context around the match (50 chars before and after)
-    context_start = max(0, match_start - 50)
-    context_end = min(len(text), match_end + 50)
+    # Extract context around the match
+    context_start = max(0, match_start - PRICE_CONTEXT_WINDOW_CHARS)
+    context_end = min(len(text), match_end + PRICE_CONTEXT_WINDOW_CHARS)
     context = text[context_start:context_end].lower()
 
     # Check if any fee keyword appears in the context
     for keyword in FEE_KEYWORDS:
         if keyword in context:
-            logger.debug(
-                f"is_price_near_fee_keyword: Found '{keyword}' near price "
-                f"(context: ...{context[:60]}...)"
-            )
             return True
 
     return False
@@ -916,11 +817,6 @@ def extract_price_info(text: str, snapshot: Optional[Dict[str, Any]] = None):
             # Store nights in snapshot if provided
             if snapshot:
                 snapshot["pricing_details"]["num_of_nights"] = nights
-                logger.debug(
-                    f"extract_price_info: Found price with nights pattern: "
-                    f"{currency_symbol}{price_str} for {nights} nights -> "
-                    f"total=${amount}, nights={nights}"
-                )
 
             return PriceInfo(
                 currency=map_currency_symbol(currency_symbol), amount=amount
@@ -936,25 +832,15 @@ def extract_price_info(text: str, snapshot: Optional[Dict[str, Any]] = None):
     ):
         # Check if this price is near fee keywords
         if is_price_near_fee_keyword(text, match.start(), match.end()):
-            logger.debug(
-                f"extract_price_info: Skipping price near fee keyword: "
-                f"{match.group(1)}{match.group(2)}"
-            )
             continue
 
         amount = parse_number(match.group(2))
         if amount is not None and amount > 0:
             currency_found = currency_found or match.group(1)
             all_prices.append(amount)
-            logger.debug(
-                f"extract_price_info: Found price with 'night': {match.group(1)}{match.group(2)} -> {amount}"
-            )
 
     if all_prices:
         min_price = min(all_prices)
-        logger.debug(
-            f"extract_price_info: Found {len(all_prices)} 'per night' price(s): {all_prices} -> Selected MINIMUM: {min_price}"
-        )
         return PriceInfo(currency=map_currency_symbol(currency_found), amount=min_price)
 
     # PRIORITY 3: Search for any prices (fallback)
@@ -962,30 +848,18 @@ def extract_price_info(text: str, snapshot: Optional[Dict[str, Any]] = None):
     for match in re.finditer(rf"{PRICE_SYMBOL_PATTERN}\s?([\d,.]+)", text):
         # Check if this price is near fee keywords
         if is_price_near_fee_keyword(text, match.start(), match.end()):
-            logger.debug(
-                f"extract_price_info: Skipping price near fee keyword: "
-                f"{match.group(1)}{match.group(2)}"
-            )
             continue
 
         amount = parse_number(match.group(2))
         if amount is not None and amount > 0:
             currency_found = currency_found or match.group(1)
             all_prices.append(amount)
-            logger.debug(
-                f"extract_price_info: Found price: {match.group(1)}{match.group(2)} -> {amount}"
-            )
 
     if not all_prices:
-        logger.debug("extract_price_info: No prices found")
         return None
 
     # Choose the MINIMUM price
     min_price = min(all_prices)
-    logger.debug(
-        f"extract_price_info: Found {len(all_prices)} price(s): {all_prices} -> Selected MINIMUM: {min_price}"
-    )
-
     return PriceInfo(currency=map_currency_symbol(currency_found), amount=min_price)
 
 

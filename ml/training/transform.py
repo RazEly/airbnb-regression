@@ -113,6 +113,7 @@ from pyspark.sql.types import FloatType, StringType, StructField, StructType
 
 # COMMAND ----------
 
+
 def create_calendar(calendar: DataFrame):
     window = Window.partitionBy("city")
     calendar = (
@@ -165,12 +166,14 @@ def create_calendar(calendar: DataFrame):
     ).drop("stoplight_bucket", "price_normalized")
     return calendar
 
+
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Data Ingestion & Schema
 
 # COMMAND ----------
+
 
 def initial_selection(df):
     # Define columns to keep. For most, the name remains the same.
@@ -238,7 +241,9 @@ def initial_selection(df):
 
     return df.select(*select_exprs)
 
+
 # COMMAND ----------
+
 
 # Set Schema
 def set_schema(df):
@@ -313,12 +318,14 @@ def set_schema(df):
 
     return df
 
+
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Core Transformations
 
 # COMMAND ----------
+
 
 # COMMAND ----------
 def transform_name(df):
@@ -328,7 +335,9 @@ def transform_name(df):
     )
     return df_temp
 
+
 # COMMAND ----------
+
 
 def transform_details(df):
     re_beds = r"(?i)\b(\d+\.?\d*)\s+beds?\b"
@@ -360,7 +369,9 @@ def transform_details(df):
 
     return df.drop("details_str")
 
+
 # COMMAND ----------
+
 
 def filter_top_k_cities(df, k=100):
     city_counts = (
@@ -369,7 +380,9 @@ def filter_top_k_cities(df, k=100):
     top_cities = [row["city"] for row in city_counts.collect()]
     return df.filter(F.col("city").isin(top_cities))
 
+
 # COMMAND ----------
+
 
 def prepare_price(df):
     """
@@ -399,7 +412,9 @@ def prepare_price(df):
 
     return df
 
+
 # COMMAND ----------
+
 
 def filter_valid_prices(df):
     """
@@ -412,14 +427,18 @@ def filter_valid_prices(df):
         & (F.col("price_cleaned").isNotNull())
     )
 
+
 # COMMAND ----------
+
 
 def transform_location(df):
     # City is the first term before the first comma
     df = df.withColumn("city", F.split(F.col("location"), ",").getItem(0))
     return df
 
+
 # COMMAND ----------
+
 
 # Superhost Transformation
 def transform_superhost(df):
@@ -430,7 +449,9 @@ def transform_superhost(df):
     )
     return df
 
+
 # COMMAND ----------
+
 
 # Interaction Features
 def create_interaction_features(df):
@@ -492,7 +513,9 @@ def create_interaction_features(df):
         ).alias("rooms_per_guest"),
     )
 
+
 # COMMAND ----------
+
 
 def transform_amenities(df):
     from pyspark.sql.types import ArrayType, StringType, StructField, StructType
@@ -544,6 +567,7 @@ def transform_amenities(df):
 
     return df.drop("amenities", "amenities_parsed")
 
+
 def transform_distances(df, stations_df, airports_df):
     """
     Calculates the distance to the closest train station and airport.
@@ -553,13 +577,18 @@ def transform_distances(df, stations_df, airports_df):
     from ml.utils.geo import get_closest_distance
 
     @pandas_udf(DoubleType())
-    def get_closest_train_station_distance(lats: pd.Series, longs: pd.Series) -> pd.Series:
+    def get_closest_train_station_distance(
+        lats: pd.Series, longs: pd.Series
+    ) -> pd.Series:
         """
         Pandas UDF to calculate the distance to the closest train station.
         """
         pdf = pd.concat([lats, longs], axis=1)
-        pdf.columns = ['lat', 'long']
-        return pdf.apply(lambda row: get_closest_distance(row['lat'], row['long'], stations_df), axis=1)
+        pdf.columns = ["lat", "long"]
+        return pdf.apply(
+            lambda row: get_closest_distance(row["lat"], row["long"], stations_df),
+            axis=1,
+        )
 
     @pandas_udf(DoubleType())
     def get_closest_airport_distance(lats: pd.Series, longs: pd.Series) -> pd.Series:
@@ -567,12 +596,22 @@ def transform_distances(df, stations_df, airports_df):
         Pandas UDF to calculate the distance to the closest airport.
         """
         pdf = pd.concat([lats, longs], axis=1)
-        pdf.columns = ['lat', 'long']
-        return pdf.apply(lambda row: get_closest_distance(row['lat'], row['long'], airports_df), axis=1)
+        pdf.columns = ["lat", "long"]
+        return pdf.apply(
+            lambda row: get_closest_distance(row["lat"], row["long"], airports_df),
+            axis=1,
+        )
 
-    df = df.withColumn("distance_to_closest_train_station", get_closest_train_station_distance(F.col("lat"), F.col("long")))
-    df = df.withColumn("distance_to_closest_airport", get_closest_airport_distance(F.col("lat"), F.col("long")))
+    df = df.withColumn(
+        "distance_to_closest_train_station",
+        get_closest_train_station_distance(F.col("lat"), F.col("long")),
+    )
+    df = df.withColumn(
+        "distance_to_closest_airport",
+        get_closest_airport_distance(F.col("lat"), F.col("long")),
+    )
     return df
+
 
 # COMMAND ----------
 
@@ -580,6 +619,7 @@ def transform_distances(df, stations_df, airports_df):
 # MAGIC ## City-Level Transformations
 
 # COMMAND ----------
+
 
 def fit_transform_city(train_df, val_df):
     # Compute median price per city in train_df
@@ -626,12 +666,14 @@ def fit_transform_city(train_df, val_df):
 
     return train_df, val_df
 
+
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Advanced Geospatial Features
 
 # COMMAND ----------
+
 
 def transform_neighborhoods_pre_filter(train_df, val_df):
     """
@@ -667,7 +709,7 @@ def transform_neighborhoods_pre_filter(train_df, val_df):
         # Initialize cluster_id column
         city_pdf["cluster_id"] = -1
 
-        # ========== GEOSPATIAL OUTLIER FILTERING ==========
+        # Geospatial outlier filtering
         def remove_coordinate_outliers_iqr(pdf, k=3.0):
             """
             Removes geospatial outliers using IQR method on lat/long.
@@ -721,7 +763,7 @@ def transform_neighborhoods_pre_filter(train_df, val_df):
             # Not enough valid points to cluster
             return city_pdf
 
-        # ========== HDBSCAN CLUSTERING ==========
+        # HDBSCAN clustering
         coords_radians = np.radians(valid_coords[["lat", "long"]].values)
         clusterer = HDBSCAN(
             min_cluster_size=mcs,
@@ -802,7 +844,9 @@ def transform_neighborhoods_pre_filter(train_df, val_df):
 
     return train_clustered, val_clustered
 
+
 # COMMAND ----------
+
 
 def compute_cluster_medians(train_df, val_df):
     """
@@ -861,12 +905,14 @@ def compute_cluster_medians(train_df, val_df):
 
     return train_df, val_df
 
+
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## ML Pipeline
 
 # COMMAND ----------
+
 
 # Prepare Feature Vector
 def fit_transform_features(train_df, val_df, features=None):
@@ -1008,12 +1054,14 @@ def fit_transform_features(train_df, val_df, features=None):
         binary_features,  # Feature names
     )
 
+
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Model Training
 
 # COMMAND ----------
+
 
 def train_models(train_data, val_data):
     # ... (Keep your existing Model Dictionary and setup) ...
@@ -1132,6 +1180,7 @@ def train_models(train_data, val_data):
     # Return results and the trained model
     return results, model
 
+
 # COMMAND ----------
 
 FEATURE_CATEGORIES = {
@@ -1178,6 +1227,7 @@ CATEGORY_COLORS = {
 
 # COMMAND ----------
 
+
 def categorize_feature(feature_name):
     """
     Map a feature name to its category.
@@ -1192,7 +1242,9 @@ def categorize_feature(feature_name):
     # Look up in category dictionary
     return FEATURE_CATEGORIES.get(clean_name, "Other")
 
+
 # COMMAND ----------
+
 
 def plot_feature_importance(
     gbt_model,
@@ -1259,7 +1311,9 @@ def plot_feature_importance(
 
     return importance_df
 
+
 # COMMAND ----------
+
 
 def plot_feature_correlations(
     train_df,
@@ -1346,7 +1400,9 @@ def plot_feature_correlations(
     plt.savefig(output_file, dpi=150, bbox_inches="tight")
     plt.close()
 
+
 # COMMAND ----------
+
 
 def plot_feature_distributions(
     train_df, importance_df, output_file="feature_distributions.png", sample_size=15000
@@ -1439,7 +1495,9 @@ def plot_feature_distributions(
     plt.savefig(output_file, dpi=150, bbox_inches="tight")
     plt.close()
 
+
 # COMMAND ----------
+
 
 def plot_feature_impact(
     val_df, importance_df, output_file="feature_impact.png", sample_size=5000
@@ -1533,7 +1591,9 @@ def plot_feature_impact(
     plt.savefig(output_file, dpi=150, bbox_inches="tight")
     plt.close()
 
+
 # COMMAND ----------
+
 
 def plot_engineering_impact(
     importance_df, output_file="feature_engineering_impact.png"
@@ -1602,7 +1662,9 @@ def plot_engineering_impact(
     plt.savefig(output_file, dpi=150, bbox_inches="tight")
     plt.close()
 
+
 # COMMAND ----------
+
 
 def visualize_feature_selection(
     train_df,
@@ -1653,7 +1715,9 @@ def visualize_feature_selection(
         importance_df, output_file=f"{output_dir}/feature_engineering_impact.png"
     )
 
+
 # COMMAND ----------
+
 
 def visualize_city_clusters(spark_df, city_name="Greater London", sample_size=20000):
     """
@@ -1715,12 +1779,14 @@ def visualize_city_clusters(spark_df, city_name="Greater London", sample_size=20
     print(f"  ✓ Saved {filename}")
     plt.close()  # Close figure to free memory
 
+
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Pipeline Execution
 
 # COMMAND ----------
+
 
 def apply_stateless_transformations(df, stations_df, airports_df):
     df = initial_selection(df)
@@ -1736,6 +1802,7 @@ def apply_stateless_transformations(df, stations_df, airports_df):
     df = transform_distances(df, stations_df, airports_df)
     return df
 
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -1748,14 +1815,14 @@ try:
     train_stations_df = pd.read_parquet("../models/production/train_stations.parquet")
 except Exception as e:
     print(f"Could not load train_stations.parquet: {e}")
-    train_stations_df = pd.DataFrame(columns=['lat', 'long', 'h3_index'])
+    train_stations_df = pd.DataFrame(columns=["lat", "long", "h3_index"])
 
 # Load airports data
 try:
     airports_df = pd.read_parquet("../models/production/airports.parquet")
 except Exception as e:
     print(f"Could not load airports.parquet: {e}")
-    airports_df = pd.DataFrame(columns=['lat', 'long', 'h3_index'])
+    airports_df = pd.DataFrame(columns=["lat", "long", "h3_index"])
 
 # COMMAND ----------
 

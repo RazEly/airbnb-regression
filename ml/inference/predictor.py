@@ -58,12 +58,9 @@ class PricePredictor:
         logging.getLogger("py4j.clientserver").setLevel(logging.ERROR)
         logging.getLogger("py4j.java_gateway").setLevel(logging.ERROR)
 
-        logger.info("=" * 70)
-        logger.info("INITIALIZING ML PRICE PREDICTOR")
-        logger.info("=" * 70)
+        logger.info("Initializing ML Price Predictor")
 
         # Step 1: Initialize Spark
-        logger.info("\n[1/3] Initializing SparkSession...")
         self.spark = (
             SparkSession.builder.appName("AirbnbPricePredictor")
             .config("spark.driver.memory", "2g")
@@ -75,35 +72,26 @@ class PricePredictor:
         # Suppress Spark logging noise
         self.spark.sparkContext.setLogLevel("ERROR")
 
-        logger.info("  ✓ SparkSession ready")
-
         # Step 2: Load models
-        logger.info("\n[2/3] Loading ML models...")
         self.model_loader = ModelLoader(self.spark, model_dir)
-        logger.info("  ✓ All models loaded")
 
         # Step 2.5: Load calendar data for date-based adjustments
-        logger.info("\n[2.5/3] Loading calendar adjustment data...")
         calendar_path = os.path.join(model_dir, "calendar")
         if os.path.exists(calendar_path):
             from ml.inference.calendar_loader import CalendarLoader
 
             self.calendar_loader = CalendarLoader(calendar_path)
-            logger.info("  ✓ Calendar data loaded")
+            logger.info("Calendar adjustment data loaded")
         else:
             logger.warning(
-                f"  ⚠ Calendar data not found at {calendar_path}, date adjustments disabled"
+                f"Calendar data not found at {calendar_path}, date adjustments disabled"
             )
             self.calendar_loader = None
 
         # Step 3: Define schema for inference
-        logger.info("\n[3/3] Setting up inference pipeline...")
         self._setup_schema()
-        logger.info("  ✓ Inference pipeline ready")
 
-        logger.info("\n" + "=" * 70)
-        logger.info("ML PREDICTOR INITIALIZED SUCCESSFULLY")
-        logger.info("=" * 70 + "\n")
+        logger.info("ML predictor initialized successfully")
 
     def _setup_schema(self):
         """Define Spark DataFrame schema for features."""
@@ -194,9 +182,6 @@ class PricePredictor:
                 return {"error": error_msg, "features": {}}
 
             # Step 2: Engineer features
-            if verbose:
-                logger.info("Running feature engineering pipeline...")
-
             features = prepare_features_for_model(
                 parsed_data, self.model_loader, verbose=verbose
             )
@@ -213,9 +198,6 @@ class PricePredictor:
             listed_price_usd = convert_to_usd(price_per_night, currency)
 
             # Step 4: Create Spark DataFrame from features
-            if verbose:
-                logger.info("\nCreating Spark DataFrame for prediction...")
-
             # Convert features to row format
             row_data = []
             for field in self.feature_schema.fields:
@@ -231,15 +213,7 @@ class PricePredictor:
             # Create DataFrame
             df = self.spark.createDataFrame([row_data], schema=self.feature_schema)
 
-            if verbose:
-                logger.info(
-                    f"  ✓ Created DataFrame with {df.count()} row, {len(df.columns)} columns"
-                )
-
             # Step 5: Apply continuous imputation
-            if verbose:
-                logger.info("\nApplying imputation...")
-
             continuous_cols = [
                 f.name
                 for f in self.feature_schema.fields
@@ -253,43 +227,19 @@ class PricePredictor:
             # Apply binary imputer (original col → col_imputed)
             df = self.model_loader.imputer_binary.transform(df)
 
-            if verbose:
-                logger.info("  ✓ Imputation complete")
-
             # Step 6: Assemble imputed continuous features into vector
-            if verbose:
-                logger.info("\nAssembling imputed features into vectors...")
-
             df = self.model_loader.assembler_continuous.transform(df)
 
             # Assemble imputed binary feature into vector
             df = self.model_loader.assembler_binary.transform(df)
 
-            if verbose:
-                logger.info("  ✓ Feature assembly complete")
-
             # Step 7: Apply scaling to continuous features
-            if verbose:
-                logger.info("\nApplying feature scaling...")
-
             df = self.model_loader.scaler.transform(df)
 
-            if verbose:
-                logger.info("  ✓ Scaling complete")
-
             # Step 8: Assemble final feature vector (scaled_continuous + binary)
-            if verbose:
-                logger.info("\nAssembling final feature vector...")
-
             df = self.model_loader.assembler_final.transform(df)
 
-            if verbose:
-                logger.info("  ✓ Feature vector ready")
-
             # Step 9: Run GBT prediction
-            if verbose:
-                logger.info("\nRunning GBT model prediction...")
-
             predictions = self.model_loader.gbt_model.transform(df)
 
             # Extract prediction
@@ -308,37 +258,12 @@ class PricePredictor:
                 calendar_adjustment = self.calendar_loader.get_adjustment(
                     city=parsed_city, date=check_in_date
                 )
-                if verbose:
-                    if calendar_adjustment != 0:
-                        logger.info(
-                            f"\n  Calendar adjustment for {parsed_city} on {check_in_date}: {calendar_adjustment:+.4f} (log space)"
-                        )
-                    else:
-                        logger.info(
-                            f"\n  No calendar adjustment available for {parsed_city} on {check_in_date}"
-                        )
 
             log_price_adjusted = log_price_base + calendar_adjustment
 
             # Step 9b: Inverse log transform
             predicted_price_base_usd = np.expm1(log_price_base)
             predicted_price_usd = np.expm1(log_price_adjusted)
-
-            if verbose:
-                if calendar_adjustment != 0:
-                    adjustment_dollars = predicted_price_usd - predicted_price_base_usd
-                    adjustment_pct = (
-                        adjustment_dollars / predicted_price_base_usd
-                    ) * 100
-                    logger.info(f"  Base prediction: ${predicted_price_base_usd:.2f}")
-                    logger.info(
-                        f"  Calendar impact: {adjustment_dollars:+.2f} ({adjustment_pct:+.1f}%)"
-                    )
-                    logger.info(f"  Final prediction: ${predicted_price_usd:.2f}")
-                else:
-                    logger.info(
-                        f"  ✓ Prediction complete: ${predicted_price_usd:.2f} USD/night"
-                    )
 
             # Step 10: Calculate comparison metrics
             difference_usd = predicted_price_usd - listed_price_usd

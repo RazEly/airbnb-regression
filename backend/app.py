@@ -1,6 +1,6 @@
+import difflib
 import json
 import logging
-import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
@@ -22,8 +22,14 @@ CORS(app)  # Enable CORS for all routes
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "database" / "listings.db"
 
+# Stoplight threshold
+STOPLIGHT_THRESHOLD_PERCENT = 10.0
+
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
+from backend.logging_config import configure_logging
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 # Global predictor instance (initialized on startup)
 predictor = None
@@ -49,15 +55,12 @@ def calculate_stoplight(difference_pct: float) -> str:
         'neutral': Predicted ≈ Listed (fair price)
         'bad': Predicted < Listed (overpriced, bad deal)
     """
-    if difference_pct > 10:  # Predicted > Listed by >10% → Good deal
+    if difference_pct > STOPLIGHT_THRESHOLD_PERCENT:
         return "good"
-    elif difference_pct < -10:  # Predicted < Listed by >10% → Overpriced
+    elif difference_pct < -STOPLIGHT_THRESHOLD_PERCENT:
         return "bad"
     else:
         return "neutral"
-
-
-import difflib
 
 
 @app.route("/health", methods=["GET"])
@@ -110,8 +113,8 @@ def get_colors():
             matched_location = best_match
 
         if matched_location:
-            print(
-                f"DEBUG: Matched input '{location_input}' to DB location '{matched_location}'"
+            logger.debug(
+                f"Matched input '{location_input}' to DB location '{matched_location}'"
             )
             # Query returns MM-DD dates from database
             cursor = conn.execute(
@@ -137,8 +140,8 @@ def get_colors():
 
             return jsonify(result)
         else:
-            print(
-                f"DEBUG: No match found for '{location_input}'. Returning default green."
+            logger.debug(
+                f"No match found for '{location_input}'. Returning default green."
             )
             # If no match found, return green for next 2 years
             start_date = datetime.now()
@@ -149,7 +152,7 @@ def get_colors():
             return jsonify(result)
 
     except Exception as e:
-        print(f"ERROR: {str(e)}")
+        logger.error(f"Error in /colors endpoint: {str(e)}")
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
@@ -166,18 +169,7 @@ def ingest_listing():
     url = payload.get("url")
     captured_at = payload.get("capturedAt") or payload.get("captured_at")
 
-    # === DEBUG: Save HTML for analysis ===
-    debug_dir = BASE_DIR / "database" / "debug_captures"
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_listing_id = (listing_id or timestamp).replace("/", "_")
-    debug_html_path = debug_dir / f"listing_{safe_listing_id}_{timestamp}.html"
-
-    try:
-        with open(debug_html_path, "w", encoding="utf-8") as f:
-            f.write(html)
-    except Exception as e:
-        print(f"WARNING: Failed to save debug HTML: {e}")
+    logger.info(f"POST /listing request for listing_id={listing_id}")
 
     try:
         parsed = parse_listing_document(
@@ -187,21 +179,15 @@ def ingest_listing():
             captured_at=captured_at,
         )
 
-        # === DEBUG: Save extraction results ===
-        debug_json_path = debug_dir / f"result_{safe_listing_id}_{timestamp}.json"
-        try:
-            with open(debug_json_path, "w", encoding="utf-8") as f:
-                json.dump(parsed, f, indent=2, default=str)
-        except Exception as e:
-            print(f"WARNING: Failed to save debug JSON: {e}")
+        save_debug_capture(listing_id, html, parsed)
         log_listing_summary(parsed)
 
-        # === NEW: Run ML prediction ===
+        # Run ML prediction
         prediction_result = None
         if predictor is not None:
             try:
                 print("\n" + "=" * 70)
-                print("RUNNING ML PRICE PREDICTION")
+                print("RUNNING PRICE PREDICTION")
                 print("=" * 70)
                 prediction_result = predictor.predict(parsed, verbose=True)
                 if "error" not in prediction_result:
@@ -214,6 +200,9 @@ def ingest_listing():
 
                 traceback.print_exc()
                 prediction_result = {"error": str(pred_error)}
+                logger.error(
+                    f"ML prediction failed for listing {listing_id}: {str(pred_error)}"
+                )
 
         # Build response with prediction data
         response = {"status": "ok", **parsed}
@@ -226,8 +215,10 @@ def ingest_listing():
             response["status"] = "warning"
         return jsonify(response)
     except ValueError as exc:
+        logger.error(f"ValueError parsing listing {listing_id}: {str(exc)}")
         return jsonify({"error": str(exc)}), 400
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error parsing listing {listing_id}: {str(e)}")
         return jsonify({"error": "Failed to parse listing"}), 500
 
 
@@ -282,10 +273,34 @@ def format_value(value):
     return str(value)
 
 
+def save_debug_capture(listing_id, html: str, parsed_data: dict) -> None:
+    """Save HTML and JSON debug captures for parser analysis."""
+    debug_dir = BASE_DIR / "database" / "debug_captures"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_listing_id = (listing_id or timestamp).replace("/", "_")
+
+    # Save HTML
+    debug_html_path = debug_dir / f"listing_{safe_listing_id}_{timestamp}.html"
+    try:
+        with open(debug_html_path, "w", encoding="utf-8") as f:
+            f.write(html)
+    except Exception as e:
+        logger.warning(f"Failed to save debug HTML: {e}")
+
+    # Save JSON
+    debug_json_path = debug_dir / f"result_{safe_listing_id}_{timestamp}.json"
+    try:
+        with open(debug_json_path, "w", encoding="utf-8") as f:
+            json.dump(parsed_data, f, indent=2, default=str)
+    except Exception as e:
+        logger.warning(f"Failed to save debug JSON: {e}")
+
+
 def print_prediction_summary(result: dict):
-    """Print ML prediction results to console."""
+    """Print prediction results to console."""
     print("\n" + "=" * 70)
-    print("ML PRICE PREDICTION RESULTS")
+    print("PRICE PREDICTION RESULTS")
     print("=" * 70)
 
     # Basic info
@@ -400,9 +415,7 @@ def print_prediction_summary(result: dict):
     superhost_str = (
         "Yes"
         if superhost_val == 1
-        else "No"
-        if superhost_val == 0
-        else str(superhost_val)
+        else "No" if superhost_val == 0 else str(superhost_val)
     )
     print(f"  {'Is Superhost':<40} {superhost_str}")
 
