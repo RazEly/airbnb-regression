@@ -27,7 +27,7 @@ from pyspark.sql.types import (
 
 from ml.inference.loader import ModelLoader
 from ml.inference.features import prepare_features_for_model
-from ml.utils.currency import convert_to_usd
+from ml.utils.currency import convert_to_usd, convert_from_usd, get_currency_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,8 @@ class PricePredictor:
                 StructField("property_number_of_reviews", DoubleType(), True),
                 StructField("guest_capacity_ratio", DoubleType(), True),
                 StructField("guests", DoubleType(), True),
+                StructField("distance_to_closest_train_station", DoubleType(), True),
+                StructField("distance_to_closest_airport", DoubleType(), True),
                 # Binary features (2)
                 StructField("is_superhost_binary", IntegerType(), True),
                 StructField("is_studio_binary", IntegerType(), True),
@@ -346,6 +348,17 @@ class PricePredictor:
                 else 0
             )
 
+            # Convert predicted price back to original currency for display
+            predicted_price_original = convert_from_usd(predicted_price_usd, currency)
+            difference_original = (
+                predicted_price_original - price_per_night
+                if predicted_price_original
+                else 0
+            )
+
+            # Get currency symbol
+            currency_symbol = get_currency_symbol(currency)
+
             # Return results
             return {
                 "predicted_price_per_night_usd": predicted_price_usd,
@@ -361,7 +374,10 @@ class PricePredictor:
                 "city": features.get("city_name", "Unknown"),
                 "cluster_id": features.get("cluster_id"),
                 "currency": currency,
+                "currency_symbol": currency_symbol,
                 "listed_price_original": price_per_night,
+                "predicted_price_original": predicted_price_original,
+                "difference_original": difference_original,
             }
 
         except Exception as e:

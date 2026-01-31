@@ -14,10 +14,14 @@
    * Show prediction overlay with stoplight indicator
    * @param {Object} prediction - Prediction data from backend
    * @param {string} prediction.stoplight - 'good', 'neutral', or 'bad'
-   * @param {number} prediction.predicted_price_per_night_usd - Predicted price
-   * @param {number} prediction.listed_price_per_night_usd - Listed price
+   * @param {number} prediction.predicted_price_per_night_usd - Predicted price in USD
+   * @param {number} prediction.listed_price_per_night_usd - Listed price in USD
+   * @param {number} prediction.predicted_price_original - Predicted price in original currency
+   * @param {number} prediction.listed_price_original - Listed price in original currency
+   * @param {number} prediction.difference_original - Difference in original currency
    * @param {number} prediction.difference_usd - Dollar difference
    * @param {number} prediction.difference_pct - Percentage difference
+   * @param {string} prediction.currency_symbol - Currency symbol (e.g., '$', '€', '₪')
    * @param {string} prediction.city - City name
    * @param {string} prediction.cluster_id - Cluster ID
    */
@@ -44,17 +48,17 @@
     const stoplight = prediction.stoplight || 'neutral';
     const stoplightClass = `stoplight-${stoplight}`;
 
-    // Get prices
-    const listed = prediction.listed_price_per_night_usd || 0;
-    const predicted = prediction.predicted_price_per_night_usd || 0;
-    const diffUsd = prediction.difference_usd || 0;
+    // Get prices - use original currency if available, fallback to USD
+    const currencySymbol = prediction.currency_symbol || '$';
+    const listed = prediction.listed_price_original || prediction.listed_price_per_night_usd || 0;
+    const predicted = prediction.predicted_price_original || prediction.predicted_price_per_night_usd || 0;
+    const diffAmount = prediction.difference_original || Math.abs(prediction.difference_usd || 0);
     const diffPct = prediction.difference_pct || 0;
     const city = prediction.city || 'Unknown';
     const cluster = prediction.cluster_id || 'N/A';
-    const currency = prediction.currency || 'USD';
 
     // Calculate savings/overpay
-    const savingsAmount = Math.abs(diffUsd);
+    const savingsAmount = Math.abs(diffAmount);
     const savingsPct = Math.abs(diffPct);
 
     // Determine label and icon
@@ -62,11 +66,11 @@
     if (stoplight === 'good') {
       statusLabel = 'GOOD DEAL';
       statusIcon = '🟢';
-      statusMessage = `You save $${savingsAmount.toFixed(0)} (${savingsPct.toFixed(0)}%)`;
+      statusMessage = `You save ${currencySymbol}${savingsAmount.toFixed(0)} (${savingsPct.toFixed(0)}%)`;
     } else if (stoplight === 'bad') {
       statusLabel = 'OVERPRICED';
       statusIcon = '🔴';
-      statusMessage = `Overpriced by $${savingsAmount.toFixed(0)} (${savingsPct.toFixed(0)}%)`;
+      statusMessage = `Overpriced by ${currencySymbol}${savingsAmount.toFixed(0)} (${savingsPct.toFixed(0)}%)`;
     } else {
       statusLabel = 'FAIR PRICE';
       statusIcon = '🟡';
@@ -87,11 +91,11 @@
         <div class="price-comparison">
           <div class="price-row">
             <span class="price-label">Listed:</span>
-            <span class="price-value">$${listed.toFixed(0)} ${currency}/night</span>
+            <span class="price-value">${currencySymbol}${listed.toFixed(0)}/night</span>
           </div>
           <div class="price-row">
             <span class="price-label">Predicted:</span>
-            <span class="price-value">$${predicted.toFixed(0)} ${currency}/night</span>
+            <span class="price-value">${currencySymbol}${predicted.toFixed(0)}/night</span>
           </div>
           <div class="price-row highlight">
             <span class="price-label">${stoplight === 'good' ? 'You save:' : stoplight === 'bad' ? 'Overpay:' : 'Difference:'}</span>
@@ -111,7 +115,6 @@
         </div>
 
         <div class="prediction-footer">
-          <span class="powered-by">Powered by ML prediction</span>
         </div>
       </div>
     `;

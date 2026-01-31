@@ -360,26 +360,29 @@ def print_prediction_summary(result: dict):
     # Feature summary - show ALL 19 features
     features = result.get("features", {})
 
-    print("\nContinuous Features (18):")
+    print("\nContinuous Features (24):")
     continuous_features = [
-        ("review_volume_quality", "Review Volume × Quality"),
-        ("num_bedrooms", "Number of Bedrooms"),
-        ("median_city", "City Median Price (USD)"),
-        ("loc_details_length_logp1", "Location Details Length (log1p)"),
-        ("guests", "Guest Capacity"),
-        ("amenities_count", "Number of Amenities"),
-        ("description_length_logp1", "Description Length (log1p)"),
-        ("cluster_median", "Cluster Median Price (USD)"),
-        ("host_number_of_reviews", "Host Reviews Count"),
-        ("ratings", "Property Rating"),
-        ("host_rating", "Host Rating"),
-        ("host_year", "Host Since Year"),
-        ("rooms_per_guest", "Rooms per Guest"),
-        ("property_number_of_reviews", "Property Reviews Count"),
-        ("total_rooms", "Total Rooms"),
-        ("lat", "Latitude"),
-        ("long", "Longitude"),
+        ("distance_to_closest_airport", "Distance to Closest Airport (km)"),
         ("num_baths", "Number of Bathrooms"),
+        ("num_bedrooms", "Number of Bedrooms"),
+        ("num_beds", "Number of Beds"),
+        ("ratings", "Property Rating"),
+        ("bed_to_bedroom_ratio", "Bed to Bedroom Ratio"),
+        ("review_volume_quality", "Review Volume × Quality"),
+        ("host_rating", "Host Rating"),
+        ("rooms_per_guest", "Rooms per Guest"),
+        ("total_rooms", "Total Rooms"),
+        ("cluster_median", "Cluster Median Price (USD)"),
+        ("distance_to_closest_train_station", "Distance to Train Station (km)"),
+        ("host_year", "Host Since Year"),
+        ("beds_per_guest", "Beds per Guest"),
+        ("superhost_rating_interaction", "Superhost × Rating Interaction"),
+        ("amenities_count", "Number of Amenities"),
+        ("host_number_of_reviews", "Host Reviews Count"),
+        ("bedrooms_per_guest", "Bedrooms per Guest"),
+        ("property_number_of_reviews", "Property Reviews Count"),
+        ("guest_capacity_ratio", "Guest Capacity Ratio"),
+        ("guests", "Guest Capacity"),
     ]
 
     for feat_key, feat_label in continuous_features:
@@ -392,7 +395,7 @@ def print_prediction_summary(result: dict):
             value_str = str(value)
         print(f"  {feat_label:<40} {value_str}")
 
-    print("\nBinary Features (1):")
+    print("\nBinary Features (2):")
     superhost_val = features.get("is_superhost_binary", "N/A")
     superhost_str = (
         "Yes"
@@ -402,6 +405,12 @@ def print_prediction_summary(result: dict):
         else str(superhost_val)
     )
     print(f"  {'Is Superhost':<40} {superhost_str}")
+
+    studio_val = features.get("is_studio_binary", "N/A")
+    studio_str = (
+        "Yes" if studio_val == 1 else "No" if studio_val == 0 else str(studio_val)
+    )
+    print(f"  {'Is Studio':<40} {studio_str}")
 
     print("\n" + "=" * 70 + "\n")
 

@@ -35,6 +35,62 @@ EXCHANGE_RATES_TO_USD = {
     "ZAR": 0.0608,  # 1 ZAR = ~0.061 USD
 }
 
+# Currency symbol mapping
+CURRENCY_SYMBOLS = {
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "CAD": "CA$",
+    "AUD": "A$",
+    "NZD": "NZ$",
+    "MXN": "MX$",
+    "SGD": "S$",
+    "HKD": "HK$",
+    "TWD": "NT$",
+    "BRL": "R$",
+    "CHF": "CHF",
+    "PHP": "₱",
+    "KRW": "₩",
+    "JPY": "¥",
+    "CNY": "¥",
+    "INR": "₹",
+    "TRY": "₺",
+    "VND": "₫",
+    "ILS": "₪",
+    "SEK": "kr",
+    "NOK": "kr",
+    "DKK": "kr",
+    "PLN": "zł",
+    "CZK": "Kč",
+    "THB": "฿",
+    "MYR": "RM",
+    "ZAR": "R",
+}
+
+
+def get_currency_symbol(currency_code):
+    """
+    Get the currency symbol for a given currency code.
+
+    Args:
+        currency_code: str - The currency code (e.g., "USD", "EUR", "ILS")
+
+    Returns:
+        str: The currency symbol (e.g., "$", "€", "₪")
+
+    Examples:
+        >>> get_currency_symbol("USD")
+        "$"
+        >>> get_currency_symbol("ILS")
+        "₪"
+        >>> get_currency_symbol("EUR")
+        "€"
+    """
+    if not currency_code:
+        return "$"  # Default to USD symbol
+
+    return CURRENCY_SYMBOLS.get(currency_code.upper().strip(), currency_code)
+
 
 def convert_to_usd(amount, from_currency):
     """

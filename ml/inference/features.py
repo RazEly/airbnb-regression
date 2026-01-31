@@ -172,123 +172,265 @@ def engineer_geospatial_features(
     base_features: Dict[str, float], model_loader: Any, verbose: bool = False
 ) -> Dict[str, float]:
     """
+
+
     Add city/cluster-based geospatial features using model_loader.
 
+
+
+
+
     Uses fuzzy city matching and KNN cluster assignment to add:
+
+
     - median_city: Median price for matched city
+
+
     - cluster_median: Median price for assigned cluster
 
+
+
+
+
     Args:
+
+
         base_features: Dict containing at minimum: city, lat, long
+
+
         model_loader: ModelLoader instance with fuzzy_match_city, get_cluster_id methods
+
+
         verbose: If True, log detailed matching information
 
+
+
+
+
     Returns:
+
+
         Dict with geospatial features added
+
+
     """
+
     geo_features = {}
 
     # Extract required fields
+
     lat = base_features.get("lat")
+
     long = base_features.get("long")
 
     if verbose:
         logger.info(f"Geospatial Engineering:")
+
         logger.info(f"  Coordinates: ({lat}, {long})")
 
     # Match city using Haversine distance to city centers
+
     matched_city = None
+
     if lat is not None and long is not None:
         matched_city = model_loader.match_city_by_distance(lat, long)
+
         if verbose:
             if matched_city:
                 logger.info(
                     f"  ✓ Matched to nearest city: {matched_city} (by coordinates)"
                 )
+
             else:
                 logger.info(f"  ✗ Could not match to city - using global median")
+
     else:
         if verbose:
             logger.info(f"  ✗ Missing coordinates - using global median")
 
     # Get city median
+
     city_median = model_loader.get_city_median(matched_city)
+
     geo_features["median_city"] = city_median
 
     if verbose:
         median_type = "city" if matched_city else "global"
+
         logger.info(f"  {median_type.capitalize()} median price: ${city_median:.2f}")
 
     # Get cluster median
+
     cluster_id = None
+
     cluster_median = None
 
     if matched_city and lat is not None and long is not None:
         cluster_id = model_loader.get_cluster_id(matched_city, lat, long)
+
         if cluster_id is not None:
             cluster_median = model_loader.get_cluster_median(
                 matched_city, cluster_id, lat, long
             )
+
             if verbose:
                 logger.info(f"  ✓ Assigned to cluster: {cluster_id}")
+
                 logger.info(f"  Cluster median price: ${cluster_median:.2f}")
+
         else:
             # Fall back to city median if cluster not found
+
             cluster_median = city_median
+
             if verbose:
                 logger.info(f"  ✗ Cluster assignment failed, using city median")
+
     else:
         # Fall back to city median if coords missing
+
         cluster_median = city_median
+
         if verbose:
             if not matched_city:
                 logger.info(f"  ✗ No matched city, using global median for cluster")
+
             else:
                 logger.info(f"  ✗ Missing coordinates, using city median for cluster")
 
     geo_features["cluster_median"] = cluster_median
 
     # Store metadata for output (not used in ML model, but needed for reporting)
+
     geo_features["city_name"] = matched_city
+
     geo_features["cluster_id"] = cluster_id
 
     return geo_features
+
+
+def engineer_distance_features(
+    base_features: Dict[str, float], model_loader: Any, verbose: bool = False
+) -> Dict[str, float]:
+    """
+    Calculates distance to closest train station and airport.
+    """
+    from ml.utils.geo import get_closest_distance
+
+    distance_features = {}
+
+    lat = base_features.get("lat")
+    long = base_features.get("long")
+
+    if lat is not None and long is not None:
+        distance_features["distance_to_closest_train_station"] = get_closest_distance(
+            lat, long, model_loader.train_stations
+        )
+        distance_features["distance_to_closest_airport"] = get_closest_distance(
+            lat, long, model_loader.airports
+        )
+    else:
+        distance_features["distance_to_closest_train_station"] = None
+        distance_features["distance_to_closest_airport"] = None
+
+    if verbose:
+        logger.info("Distance Engineering:")
+        logger.info(
+            f"  Distance to closest train station: {distance_features['distance_to_closest_train_station']}"
+        )
+        logger.info(
+            f"  Distance to closest airport: {distance_features['distance_to_closest_airport']}"
+        )
+
+    return distance_features
 
 
 def prepare_features_for_model(
     parsed_data: Dict[str, Any], model_loader: Any, verbose: bool = False
 ) -> Dict[str, float]:
     """
+
+
     Main entry point: orchestrates all feature engineering steps.
 
+
+
+
+
     Transforms raw parsed listing data into ML-ready feature dict with
+
+
     exactly 19 features (18 continuous + 1 binary) required by the model.
 
+
+
+
+
     Steps:
+
+
     1. Extract base features from parsed data
+
+
     2. Calculate text length features
+
+
     3. Convert superhost to binary
+
+
     4. Calculate interaction features
+
+
     5. Engineer geospatial features (city/cluster medians)
+
+
     6. Validate completeness
 
+
+
+
+
     Args:
+
+
         parsed_data: Output from parse_listing_document()
+
+
         model_loader: ModelLoader instance
+
+
         verbose: If True, log detailed feature engineering steps
 
+
+
+
+
     Returns:
+
+
         Dict with exactly 19 features ready for model input
 
+
+
+
+
     Raises:
+
+
         ValueError: If required features are missing after engineering
+
+
     """
+
     if verbose:
         logger.info("=" * 70)
+
         logger.info("FEATURE ENGINEERING PIPELINE")
+
         logger.info("=" * 70)
 
     # Step 1: Extract base features
+
     if verbose:
         logger.info("\n[1/5] Extracting base features from parsed data...")
 
@@ -298,6 +440,7 @@ def prepare_features_for_model(
         logger.info(f"  Extracted {len(base_features)} base fields")
 
     # Step 2: Calculate text features
+
     if verbose:
         logger.info("\n[2/5] Calculating text length features...")
 
@@ -309,15 +452,18 @@ def prepare_features_for_model(
         logger.info(
             f"  description_length_logp1: {text_features['description_length_logp1']:.4f}"
         )
+
         logger.info(
             f"  loc_details_length_logp1: {text_features['loc_details_length_logp1']:.4f}"
         )
 
     # Step 3: Convert superhost to binary
+
     if verbose:
         logger.info("\n[3/5] Converting superhost to binary...")
 
     is_superhost_binary = convert_superhost_to_binary(base_features.get("is_superhost"))
+
     base_features["is_superhost_binary"] = is_superhost_binary
 
     if verbose:
@@ -326,6 +472,7 @@ def prepare_features_for_model(
         )
 
     # Step 4: Calculate interaction features
+
     if verbose:
         logger.info("\n[4/5] Calculating interaction features...")
 
@@ -333,56 +480,95 @@ def prepare_features_for_model(
 
     if verbose:
         logger.info(f"  Generated {len(interaction_features)} interaction features:")
+
         for key, val in interaction_features.items():
             logger.info(f"    {key}: {val:.4f}")
 
     # Step 5: Engineer geospatial features
+
     if verbose:
         logger.info("\n[5/5] Engineering geospatial features...")
 
     geo_features = engineer_geospatial_features(base_features, model_loader, verbose)
 
+    # Step 6: Engineer distance features
+
+    if verbose:
+        logger.info("\n[6/6] Engineering distance features...")
+
+    distance_features = engineer_distance_features(base_features, model_loader, verbose)
+
     # Combine all features
+
     final_features = {}
 
     # Add continuous features (in metadata.json order - CRITICAL for model compatibility)
+
     final_features["num_baths"] = base_features.get("num_baths")
+
     final_features["num_bedrooms"] = base_features.get("num_bedrooms")
+
     final_features["num_beds"] = base_features.get("num_beds")
+
     final_features["ratings"] = base_features.get("ratings")
+
     final_features["bed_to_bedroom_ratio"] = interaction_features[
         "bed_to_bedroom_ratio"
     ]
+
     final_features["review_volume_quality"] = interaction_features[
         "review_volume_quality"
     ]
+
     final_features["host_rating"] = base_features.get("host_rating")
+
     final_features["rooms_per_guest"] = interaction_features["rooms_per_guest"]
+
     final_features["total_rooms"] = interaction_features["total_rooms"]
+
     final_features["cluster_median"] = geo_features["cluster_median"]
+
     final_features["host_year"] = base_features.get("host_year")
+
     final_features["beds_per_guest"] = interaction_features["beds_per_guest"]
+
     final_features["superhost_rating_interaction"] = interaction_features[
         "superhost_rating_interaction"
     ]
+
     final_features["amenities_count"] = base_features.get("amenities_count")
+
     final_features["host_number_of_reviews"] = base_features.get(
         "host_number_of_reviews"
     )
+
     final_features["bedrooms_per_guest"] = interaction_features["bedrooms_per_guest"]
+
     final_features["property_number_of_reviews"] = base_features.get(
         "property_number_of_reviews"
     )
+
     final_features["guest_capacity_ratio"] = interaction_features[
         "guest_capacity_ratio"
     ]
+
     final_features["guests"] = base_features.get("guests")
 
+    final_features["distance_to_closest_train_station"] = distance_features.get(
+        "distance_to_closest_train_station"
+    )
+
+    final_features["distance_to_closest_airport"] = distance_features.get(
+        "distance_to_closest_airport"
+    )
+
     final_features["is_superhost_binary"] = is_superhost_binary
+
     final_features["is_studio_binary"] = base_features.get("is_studio_binary")
 
     if "city_name" in geo_features:
         final_features["city_name"] = geo_features["city_name"]
+
     if "cluster_id" in geo_features:
         final_features["cluster_id"] = geo_features["cluster_id"]
 
@@ -406,6 +592,8 @@ def prepare_features_for_model(
         "property_number_of_reviews",
         "guest_capacity_ratio",
         "guests",
+        "distance_to_closest_train_station",
+        "distance_to_closest_airport",
     ]
 
     required_binary = ["is_superhost_binary", "is_studio_binary"]
@@ -419,19 +607,28 @@ def prepare_features_for_model(
 
     if verbose:
         logger.info("\n" + "=" * 70)
+
         logger.info("FEATURE ENGINEERING COMPLETE")
+
         logger.info("=" * 70)
+
         logger.info(f"Total features: {len(final_features)}")
+
         logger.info(f"  Continuous: {len(required_continuous)}")
+
         logger.info(f"  Binary: {len(required_binary)}")
 
         # Count None values
+
         none_count = sum(1 for v in final_features.values() if v is None)
+
         if none_count > 0:
             logger.info(f"\nFeatures with None values (will be imputed): {none_count}")
+
             for key, val in final_features.items():
                 if val is None:
                     logger.info(f"  - {key}")
+
         else:
             logger.info("\n✓ All features populated (no imputation needed)")
 

@@ -544,6 +544,36 @@ def transform_amenities(df):
 
     return df.drop("amenities", "amenities_parsed")
 
+def transform_distances(df, stations_df, airports_df):
+    """
+    Calculates the distance to the closest train station and airport.
+    """
+    from pyspark.sql.functions import pandas_udf
+    from pyspark.sql.types import DoubleType
+    from ml.utils.geo import get_closest_distance
+
+    @pandas_udf(DoubleType())
+    def get_closest_train_station_distance(lats: pd.Series, longs: pd.Series) -> pd.Series:
+        """
+        Pandas UDF to calculate the distance to the closest train station.
+        """
+        pdf = pd.concat([lats, longs], axis=1)
+        pdf.columns = ['lat', 'long']
+        return pdf.apply(lambda row: get_closest_distance(row['lat'], row['long'], stations_df), axis=1)
+
+    @pandas_udf(DoubleType())
+    def get_closest_airport_distance(lats: pd.Series, longs: pd.Series) -> pd.Series:
+        """
+        Pandas UDF to calculate the distance to the closest airport.
+        """
+        pdf = pd.concat([lats, longs], axis=1)
+        pdf.columns = ['lat', 'long']
+        return pdf.apply(lambda row: get_closest_distance(row['lat'], row['long'], airports_df), axis=1)
+
+    df = df.withColumn("distance_to_closest_train_station", get_closest_train_station_distance(F.col("lat"), F.col("long")))
+    df = df.withColumn("distance_to_closest_airport", get_closest_airport_distance(F.col("lat"), F.col("long")))
+    return df
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -860,6 +890,8 @@ def fit_transform_features(train_df, val_df, features=None):
                 "host_year",
                 # Geospatial features
                 "cluster_median",
+                "distance_to_closest_train_station",
+                "distance_to_closest_airport",
                 # Interaction features
                 "beds_per_guest",
                 "bedrooms_per_guest",
@@ -1690,7 +1722,7 @@ def visualize_city_clusters(spark_df, city_name="Greater London", sample_size=20
 
 # COMMAND ----------
 
-def apply_stateless_transformations(df):
+def apply_stateless_transformations(df, stations_df, airports_df):
     df = initial_selection(df)
     df = set_schema(df)
     df = prepare_price(df)  # CHANGED: Prepares price_cleaned but does NOT filter nulls
@@ -1701,6 +1733,7 @@ def apply_stateless_transformations(df):
     df = transform_superhost(df)
     df = transform_amenities(df)
     df = create_interaction_features(df)
+    df = transform_distances(df, stations_df, airports_df)
     return df
 
 # COMMAND ----------
@@ -1710,13 +1743,29 @@ def apply_stateless_transformations(df):
 
 # COMMAND ----------
 
+# Load train stations data
+try:
+    train_stations_df = pd.read_parquet("../models/production/train_stations.parquet")
+except Exception as e:
+    print(f"Could not load train_stations.parquet: {e}")
+    train_stations_df = pd.DataFrame(columns=['lat', 'long', 'h3_index'])
+
+# Load airports data
+try:
+    airports_df = pd.read_parquet("../models/production/airports.parquet")
+except Exception as e:
+    print(f"Could not load airports.parquet: {e}")
+    airports_df = pd.DataFrame(columns=['lat', 'long', 'h3_index'])
+
+# COMMAND ----------
+
 calendar = create_calendar(calendar)
 top_cities = [row["city"] for row in calendar.select("city").distinct().collect()]
 
 # COMMAND ----------
 
 # Apply stateless transformations
-df = apply_stateless_transformations(airbnb)
+df = apply_stateless_transformations(airbnb, train_stations_df, airports_df)
 
 # COMMAND ----------
 

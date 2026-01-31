@@ -49,6 +49,15 @@ AMENITIES_COUNT_REGEX = re.compile(r"Show\s+all\s+(\d+)\s+amenities?", re.IGNORE
 HOST_RATING_REGEX = re.compile(
     r"(\d+\.\d+)\s*out\s*of\s*5\s*average\s*rating", re.IGNORECASE
 )
+# Host stats from JSON data
+HOST_REVIEW_COUNT_JSON_REGEX = re.compile(
+    r'"label"\s*:\s*"Reviews"\s*,\s*"value"\s*:\s*"(\d+)"', re.IGNORECASE
+)
+YEARS_HOSTING_JSON_REGEX = re.compile(
+    r'"label"\s*:\s*"Years hosting"\s*,\s*"value"\s*:\s*"(\d+)"', re.IGNORECASE
+)
+# JSON fallback for ratings
+RATING_JSON_REGEX = re.compile(r'"ratingValue"\s*:\s*(\d+(?:\.\d+)?)', re.IGNORECASE)
 SECTION_STOP_WORDS = [
     "Where you'll sleep",
     "Where you'll be",
@@ -83,17 +92,41 @@ CURRENCY_SYMBOL_MAP = {
 
 
 def create_empty_snapshot() -> Dict[str, Any]:
+    """
+    Create snapshot with all extracted fields.
+
+    FIELDS REQUIRED BY PRODUCTION MODEL (models/production/metadata.json):
+    - num_bedrooms, num_beds, num_baths, guests, num_amenities
+    - ratings, property_number_of_reviews, host_rating, host_number_of_reviews
+    - is_superhost, host_year
+    - lat, long, city
+    - name (used for is_studio_binary detection)
+
+    Other fields are extracted for completeness but not used by the model.
+    """
     return {
-        "name": None,
-        "property_type": None,  # From overview: "Entire rental unit", "Private room", etc.
+        # === REQUIRED BY MODEL ===
+        "name": None,  # Used for is_studio_binary
+        "num_bedrooms": None,
+        "num_beds": None,
+        "num_baths": None,
+        "guests": None,
+        "num_amenities": None,
+        "ratings": None,
+        "property_number_of_reviews": None,
+        "host_rating": None,
+        "host_number_of_reviews": None,
+        "is_superhost": None,
+        "host_year": None,
+        "lat": None,
+        "long": None,
+        "city": None,
+        # === NOT USED BY MODEL (kept for compatibility) ===
+        "property_type": None,
         "price": None,
         "currency": None,
         "reviews": [],
-        "ratings": None,
         "location": None,
-        "lat": None,
-        "long": None,
-        "guests": None,
         "pricing_details": {
             "airbnb_service_fee": None,
             "cleaning_fee": None,
@@ -104,23 +137,12 @@ def create_empty_snapshot() -> Dict[str, Any]:
             "special_offer": None,
             "taxes": None,
         },
-        "host_number_of_reviews": None,
-        "host_rating": None,
         "host_response_rate": None,
-        "property_number_of_reviews": None,
-        "is_superhost": None,
-        "host_year": None,
         "details": [],
         "description": None,
         "location_details": None,
-        # === NEW FIELDS ===
-        "check_in": None,  # From URL: check_in=YYYY-MM-DD
-        "check_out": None,  # From URL: check_out=YYYY-MM-DD
-        "city": None,  # From overview: "Greater London, United Kingdom"
-        "num_bedrooms": None,  # From overview: "1 bedroom"
-        "num_beds": None,  # From overview: "1 bed"
-        "num_baths": None,  # From overview: "1 bath" or "1.5 baths"
-        "num_amenities": None,  # From "Show all 59 amenities"
+        "check_in": None,
+        "check_out": None,
     }
 
 
@@ -158,6 +180,46 @@ def extract_dates_from_url(url: Optional[str]) -> tuple:
         logger.debug(f"extract_dates_from_url: Found check_out={check_out}")
 
     return check_in, check_out
+
+
+def extract_host_stats(html_text: str) -> tuple:
+    """
+    Extract host statistics from JSON data in the HTML.
+
+    Extracts:
+    1. Host review count from REVIEW_COUNT JSON stat
+    2. Host year (calculated from years_hosting)
+
+    Args:
+        html_text: Full HTML content as string
+
+    Returns:
+        tuple: (host_number_of_reviews, host_year)
+
+    Example:
+        >>> extract_host_stats(html)
+        (7847, 2022)  # Host has 7847 reviews, joined in 2022
+    """
+    host_reviews = None
+    host_year = None
+
+    # Extract host review count from JSON
+    match = HOST_REVIEW_COUNT_JSON_REGEX.search(html_text)
+    if match:
+        host_reviews = int(match.group(1))
+        logger.debug(f"extract_host_stats: Found host_reviews={host_reviews}")
+
+    # Extract years hosting and calculate host_year
+    match = YEARS_HOSTING_JSON_REGEX.search(html_text)
+    if match:
+        years_hosting = int(match.group(1))
+        current_year = datetime.now().year
+        host_year = current_year - years_hosting
+        logger.debug(
+            f"extract_host_stats: Found years_hosting={years_hosting}, calculated host_year={host_year}"
+        )
+
+    return host_reviews, host_year
 
 
 def parse_listing_document(
@@ -235,6 +297,16 @@ def parse_listing_document(
     logger.debug(
         f"Superhost detection: {'✓ YES' if snapshot['is_superhost'] else '✗ NO'} (searched in {len(page_text):,} chars)"
     )
+
+    # === Extract host statistics (host reviews and hosting year) ===
+    logger.debug("parse_listing_document: Extracting host statistics...")
+    host_reviews, host_year = extract_host_stats(html)
+    if host_reviews is not None:
+        snapshot["host_number_of_reviews"] = host_reviews
+        logger.debug(f"  host_number_of_reviews: {host_reviews}")
+    if host_year is not None:
+        snapshot["host_year"] = host_year
+        logger.debug(f"  host_year: {host_year}")
 
     # === Calculate price per night ===
     logger.debug("parse_listing_document: Calculating price per night...")
@@ -462,7 +534,16 @@ def apply_text_fallbacks(snapshot: Dict[str, Any], text: str) -> None:
         snapshot["property_number_of_reviews"] = snapshot.get(
             "property_number_of_reviews"
         ) or parse_number(rating_match.group(2))
-    elif not snapshot.get("property_number_of_reviews"):
+    elif not snapshot.get("ratings"):
+        # JSON fallback for ratings if text pattern didn't match
+        json_rating_match = RATING_JSON_REGEX.search(text)
+        if json_rating_match:
+            snapshot["ratings"] = parse_number(json_rating_match.group(1))
+            logger.debug(
+                f"apply_text_fallbacks: JSON rating fallback matched - {snapshot['ratings']}"
+            )
+
+    if not snapshot.get("property_number_of_reviews"):
         fallback_reviews = REVIEW_COUNT_REGEX.search(text)
         if fallback_reviews:
             snapshot["property_number_of_reviews"] = parse_number(
@@ -747,6 +828,10 @@ def extract_property_overview(soup):
             elif (keyword.startswith("bath") or keyword == "baths") and baths is None:
                 baths = number
                 logger.debug(f"    -> Extracted BATHS: {baths}")
+        elif "studio" in text.lower() and bedrooms is None:
+            # Handle studio listings - they have 0 bedrooms by convention
+            bedrooms = 0
+            logger.debug(f"    -> Detected STUDIO (bedrooms=0)")
 
     result = {
         "property_type": property_type,
